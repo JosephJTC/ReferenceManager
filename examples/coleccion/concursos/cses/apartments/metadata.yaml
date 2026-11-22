@@ -1,0 +1,12 @@
+schema_version: 1
+title: Apartments
+subtitle: Emparejamiento con Two Pointers
+description: Asigna departamentos respetando una tolerancia de tamaño.
+tags: [ordenamiento, greedy, Two Pointers]
+complexity:
+  time: O(n log n + m log m)
+  space: O(n + m)
+constraints:
+  - Los tamaños y la tolerancia caben en int.
+custom:
+  plataforma: CSES

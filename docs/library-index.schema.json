@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ReferenceManager/schemas/library-index.schema.json",
+  "title": "referencemanager.library-index/v1",
+  "type": "object",
+  "required": ["schema", "generatedAt", "generator", "library", "references", "practiceSelection"],
+  "properties": {
+    "schema": { "const": "referencemanager.library-index/v1" },
+    "generatedAt": { "type": "string" },
+    "generator": { "const": "ReferenceManager" },
+    "library": {
+      "type": "object",
+      "required": ["id", "name", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "source": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["local-fs", "local-snapshot", "github", "example"] },
+            "url": { "type": "string" },
+            "branch": { "type": "string" },
+            "commit": { "type": "string" },
+            "subpath": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "idSource", "name", "tags", "path", "files", "metadata"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+          "idSource": { "enum": ["metadata", "path"] },
+          "unstable": { "type": "boolean" },
+          "name": { "type": "string" },
+          "category": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "language": { "type": "string" },
+          "platform": { "type": "string" },
+          "url": { "type": "string" },
+          "path": { "type": "string" },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "role", "size", "sha256"],
+              "properties": {
+                "path": { "type": "string" },
+                "role": { "enum": ["code", "notes", "metadata", "other"] },
+                "language": { "type": "string" },
+                "size": { "type": "integer", "minimum": 0 },
+                "sha256": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "notes": { "type": "array", "items": { "type": "string" } },
+          "metadata": { "type": "object" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "practiceSelection": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["referenceId", "file"],
+        "properties": {
+          "referenceId": { "type": "string" },
+          "file": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

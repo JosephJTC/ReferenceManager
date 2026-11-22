@@ -1,0 +1,9 @@
+schema_version: 1
+title: DSU
+language: C++ y Python
+description: Componentes disjuntas con unión por tamaño y compresión de caminos.
+tags: [DSU, conectividad, grafos]
+files: [code.cpp, code.py]
+complexity:
+  time: O(α(n)) amortizado
+  space: O(n)
