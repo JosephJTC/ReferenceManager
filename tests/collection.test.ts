@@ -42,6 +42,17 @@ test('omite archivos ocultos y no crea referencias solo con README o LICENSE', a
     assert.ok(result.entries.some(entry => entry.directory && entry.path === 'grafos'));
   });
 });
+test('oculta carpetas sin archivos en bibliotecas de solo lectura y las conserva en las editables', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'referencias-test-'));
+  try {
+    for (const [name, content] of Object.entries({ 'vacia/.gitkeep': '', 'anidada/sub/.gitkeep': '', 'grafos/bfs/code.cpp': 'int bfs;' })) { const target = path.join(root, name); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, content); }
+    const writable = new NodeFsProvider(root);
+    const directories = async (provider: NodeFsProvider) => (await new LibraryIndexer(provider).scan()).entries.filter(entry => entry.directory).map(entry => entry.path).sort();
+    assert.deepEqual(await directories(writable), ['anidada', 'anidada/sub', 'grafos', 'grafos/bfs', 'vacia']);
+    const readOnly = Object.create(writable, { capabilities: { value: { ...writable.capabilities, write: false } } }) as NodeFsProvider;
+    assert.deepEqual(await directories(readOnly), ['grafos', 'grafos/bfs']);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
 test('valida YAML y conserva campos personalizados sin exigir campos opcionales', () => {
   const valid = parseMetadata('title: Árbol\ncustom:\n  dificultad_personal: 7');
   assert.equal(valid.metadata.title, 'Árbol');
