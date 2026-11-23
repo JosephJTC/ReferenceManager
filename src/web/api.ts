@@ -180,7 +180,12 @@ export function createApi(base: string): Api {
         owner: parsed.owner, repo: parsed.repo, token
       });
       await saveLibraryRecord(record);
-      await openRecord(record.id);
+      try {
+        await openRecord(record.id);
+      } catch (error) {
+        await removeLibraryRecord(record.id).catch(() => undefined);
+        throw error;
+      }
       return summary(record);
     }),
     addLocalLibrary: () => ok(async () => {

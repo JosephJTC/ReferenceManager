@@ -63,7 +63,7 @@ export function LibrariesPanel({ busy, onBusy, onOpen, onSnapshot, onNotice }: P
   async function loadBranches() {
     await run(async () => {
       const result = await window.api.listBranches({ url: url || undefined, owner: owner || undefined, repo: repo || undefined, token: token || undefined });
-      if (result.ok) { setBranches(result.value.branches); setDefaultBranch(result.value.defaultBranch); if (!branch) setBranch(result.value.defaultBranch); }
+      if (result.ok) { setBranches(result.value.branches); setDefaultBranch(result.value.defaultBranch); if (!branch) setBranch(result.value.defaultBranch); onNotice(`Ramas cargadas: ${result.value.branches.length}.`); }
       return result;
     });
   }
