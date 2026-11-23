@@ -5,7 +5,8 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import katex from 'katex';
 import { buildReadingModel, readingVisualizations } from '../../shared/reading.js';
-import { parseSegmentValues, segmentTreeSvg, type SegmentOperation } from '../../shared/visualizations/segment-tree.js';
+import { visualizations } from '../../visualizations/index.js';
+import { inputFromSpec } from '../../visualizations/core/engine.js';
 import hljs from 'highlight.js/lib/common';
 import { z } from 'zod';
 import { canonicalPath, documentSettingsSchema, metadataLabels, type DocumentRequest, type DocumentSettings } from '../../shared/document.js';
@@ -132,11 +133,12 @@ export async function buildDocumentModel(service: DocumentSource, input: Documen
       }
       if (!reference.code.length && settings.code) blocks.push({ html: '<p class="missing">Esta referencia no contiene archivos de código.</p>' });
       if (settings.visualizations !== false) for (const spec of readingVisualizations(reference)) {
-        if (spec.type !== 'segment-tree') continue;
-        let values = [5, 8, 6, 3, 2, 7, 2, 6];
-        try { if (spec.values?.length) values = parseSegmentValues(spec.values.join(',')); } catch { warnings.push(`${reference.path}: valores de visualización no válidos; se usan valores de ejemplo.`); }
-        const operation = (['sum', 'min', 'max'].includes(spec.operation || '') ? spec.operation : 'sum') as SegmentOperation;
-        blocks.push({ html: `<figure class="visualization">${segmentTreeSvg(values, operation)}<figcaption>${escapeHtml(spec.title || 'Segment Tree')} · arreglo [${values.join(', ')}]</figcaption></figure>` });
+        const definition = visualizations.get(spec.type);
+        if (!definition?.staticSvg) continue;
+        const { values, warning } = inputFromSpec(definition, spec);
+        if (warning) warnings.push(`${reference.path}: ${warning}`);
+        const figure = definition.staticSvg(definition.parseInput(values));
+        blocks.push({ html: `<figure class="visualization">${figure.svg}<figcaption>${escapeHtml([spec.title || definition.title, figure.caption].filter(Boolean).join(' · '))}</figcaption></figure>` });
       }
     }
     const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));

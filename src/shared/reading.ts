@@ -1,10 +1,12 @@
 import type { Reference } from './types.js';
+import { visualizations as visualizationRegistry } from '../visualizations/index.js';
+import type { VisualizationSpec } from '../visualizations/core/types.js';
 import { codeExtensions, extensionOf, isMetadataFile, isRepositoryDocument, assetExtensions } from './formats.js';
 
 export type ReadingTabId = 'explanation' | 'code' | 'visualization' | 'examples' | 'complexity';
 export type ReadingSection = { file: string; kind: string; label: string };
 export type ReadingTab = { id: ReadingTabId; label: string; sections: ReadingSection[] };
-export type VisualizationSpec = { type: string; title?: string; values?: number[]; operation?: string };
+export type { VisualizationSpec } from '../visualizations/core/types.js';
 export type ReadingModel = {
   tabs: ReadingTab[];
   visible: string[];
@@ -64,31 +66,23 @@ export function readingComplexity(reference: Reference) {
   return {};
 }
 
-const visualizationAliases: Record<string, string[]> = {
-  'segment-tree': ['segment tree', 'segment-tree', 'segtree', 'arbol de segmentos', 'segmenttree']
-};
-
+/** Visualizaciones de una referencia: las declaradas en `visualizations` o, si no hay, las registradas cuyo alias aparece en el título, la carpeta o las etiquetas. */
 export function readingVisualizations(reference: Reference): VisualizationSpec[] {
   const declared = reference.metadata.visualizations ?? reference.metadata.visualizaciones;
-  const specs: VisualizationSpec[] = [];
   if (Array.isArray(declared)) {
+    const specs: VisualizationSpec[] = [];
     for (const item of declared) {
-      if (typeof item === 'string' && item.trim()) specs.push({ type: item.trim() });
+      if (typeof item === 'string' && item.trim()) specs.push({ type: item.trim().toLowerCase(), options: {} });
       else if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).type === 'string') {
-        const value = item as Record<string, unknown>;
-        specs.push({
-          type: String(value.type), title: asText(value.title),
-          values: Array.isArray(value.values) ? value.values.filter((entry): entry is number => typeof entry === 'number' && Number.isFinite(entry)).slice(0, 32) : undefined,
-          operation: asText(value.operation)
-        });
+        const { type, title, ...options } = item as Record<string, unknown>;
+        specs.push({ type: String(type).trim().toLowerCase(), title: asText(title), options });
       }
     }
     return specs;
   }
   if (declared === false) return [];
-  const haystack = fold(`${reference.title} ${reference.path.split('/').pop() || ''} ${(reference.metadata.tags || []).join(' ')}`).replace(/[_]/g, ' ');
-  for (const [type, aliases] of Object.entries(visualizationAliases)) if (aliases.some(alias => haystack.includes(alias))) specs.push({ type });
-  return specs;
+  const text = `${reference.title} ${reference.path.split('/').pop() || ''} ${(reference.metadata.tags || []).join(' ')}`;
+  return visualizationRegistry.match(text).map(definition => ({ type: definition.id, options: {} }));
 }
 
 export function buildReadingModel(reference: Reference): ReadingModel {

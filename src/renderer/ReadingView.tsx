@@ -1,11 +1,12 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Collection, Reference } from '../shared/types.js';
 import { buildReadingModel, type ReadingTabId } from '../shared/reading.js';
 import { referenceLanguages, codeExtensions, extensionOf } from '../shared/formats.js';
 import { referencePlatform, referenceCategory } from '../shared/search.js';
 import { MarkdownView, markdownHeadings, type Heading } from './MarkdownView.js';
 import { CodeView } from './CodeView.js';
-import { findVisualization } from './visualizations/registry.js';
+import { visualizations } from '../visualizations/index.js';
+import { VisualizationHost } from '../visualizations/core/VisualizationHost.js';
 import { Icon } from './icons.js';
 
 type Props = {
@@ -49,7 +50,7 @@ export function ReadingView({ reference, collection, infoOpen, busy, practiced, 
   const headings: Heading[] = useMemo(() => {
     if (!current) return [];
     if (current.id === 'code') return current.sections.map(section => ({ id: 'code-' + section.file, text: section.label, depth: 1 }));
-    if (current.id === 'visualization') return model.visualizations.map((spec, index) => ({ id: `viz-${index}`, text: spec.title || findVisualization(spec.type)?.title || spec.type, depth: 1 }));
+    if (current.id === 'visualization') return model.visualizations.map((spec, index) => ({ id: `viz-${index}`, text: spec.title || visualizations.get(spec.type)?.title || spec.type, depth: 1 }));
     const list: Heading[] = current.id === 'complexity' && (model.complexity.time || model.complexity.space) ? [{ id: 'complexity-summary', text: 'Resumen', depth: 1 }] : [];
     current.sections.forEach((section, index) => {
       list.push({ id: `sec-${index}`, text: section.label, depth: 1 });
@@ -98,10 +99,10 @@ export function ReadingView({ reference, collection, infoOpen, busy, practiced, 
             {renderFile(activeCode.file, 'code')}
           </section>}
           {current?.id === 'visualization' && model.visualizations.map((spec, index) => {
-            const entry = findVisualization(spec.type);
+            const entry = visualizations.get(spec.type);
             return <section key={index} id={`viz-${index}`} className="reading-section">
               <h2 className="section-label">{spec.title || entry?.title || spec.type}</h2>
-              {entry ? <><p className="muted">{entry.description}</p><Suspense fallback={<p className="muted">Cargando visualización…</p>}><entry.component spec={spec} /></Suspense></> : <p className="warning">No hay una visualización registrada para «{spec.type}».</p>}
+              {entry ? <><p className="muted">{entry.description}</p><VisualizationHost key={`${reference.path}:${index}`} definition={entry} spec={spec} /></> : <p className="warning">No hay una visualización registrada para «{spec.type}». Disponibles: {visualizations.list().map(item => item.id).join(', ')}.</p>}
             </section>;
           })}
           {current?.id === 'complexity' && (model.complexity.time || model.complexity.space) && <section id="complexity-summary" className="reading-section"><h2 className="section-label">Resumen</h2><table className="complexity-table"><tbody>{model.complexity.time && <tr><th>Tiempo</th><td>{model.complexity.time}</td></tr>}{model.complexity.space && <tr><th>Memoria</th><td>{model.complexity.space}</td></tr>}{model.complexity.notes && <tr><th>Notas</th><td>{model.complexity.notes}</td></tr>}</tbody></table></section>}

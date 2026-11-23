@@ -29,7 +29,8 @@ manager/
 └── tests/             Pruebas unitarias, e2e en navegador y comprobación en vivo
 ```
 
-- **Interfaz (`src/renderer`)**: React 19 + TypeScript. Interfaz tipo IDE con menús, barra lateral redimensionable, tema claro/oscuro y modos lectura/edición. Conserva el explorador de carpetas, la búsqueda con filtros (texto, lenguaje, extensión, categoría, plataforma, etiqueta), el resaltado de sintaxis, los metadatos y el espacio «Generar documento». Las visualizaciones se registran en `src/renderer/visualizations/registry.ts`. Las acciones de escritura se ocultan cuando la biblioteca activa es de solo lectura.
+- **Interfaz (`src/renderer`)**: React 19 + TypeScript. Interfaz tipo IDE con menús, barra lateral redimensionable, tema claro/oscuro y modos lectura/edición. Conserva el explorador de carpetas, la búsqueda con filtros (texto, lenguaje, extensión, categoría, plataforma, etiqueta), el resaltado de sintaxis, los metadatos y el espacio «Generar documento». Las acciones de escritura se ocultan cuando la biblioteca activa es de solo lectura.
+- **Visualizaciones (`src/visualizations`)**: núcleo común (contrato, registro, reproductor) y una carpeta independiente por visualización con su algoritmo, sus pasos y su dibujo. Incluye Segment Tree, Fenwick Tree y DSU; *Herramientas → Galería de visualizaciones* las muestra todas. Para modificar una o añadir otra, consulta la [guía de visualizaciones](docs/VISUALIZATION_GUIDE.md).
 - **Bibliotecas (`src/web/libraries.ts`)**: registro en IndexedDB con nombre, tipo, ubicación, rama, estado y fecha de la última indexación. Eliminar una conexión nunca borra archivos: solo el registro y sus cachés.
 - **Proveedores (`src/web/providers`)**: todos implementan el mismo contrato (`list`, `read`, y opcionalmente `write`, `mkdir`, `rename`, `externalUrl`) y declaran sus capacidades (`write`, `rename`, `watch`, `refresh`). El indexador no sabe de dónde vienen los bytes.
 - **Indexación (`src/core/indexer.ts`)**: recorre la lista del proveedor, valida rutas, omite binarios y archivos mayores de 2 MiB sin descargarlos, lee `metadata.yaml`/`.yml`, calcula SHA-256 y cachea por firma de versión. Se ejecuta en un *web worker* (`src/web/library.worker.ts`) para no bloquear la interfaz; la búsqueda y la composición de documentos también corren ahí.
@@ -113,7 +114,7 @@ Todo es opcional y retrocompatible: una carpeta con un solo `.cpp` sigue siendo 
 | Explicación | `introduccion`, `problema`, `intuicion`, `explicacion`/`notes`/`README`, `funcionamiento`, `invariantes`, `correctitud`, `implementacion`, `limitaciones`, `errores-comunes`, `variantes` |
 | Ejemplos | `ejemplos.md`/`examples.md` y archivos dentro de `ejemplos/` o `examples/` |
 | Complejidad | `complejidad.md`/`complexity.md` y el campo `complexity` de `metadata.yaml` |
-| Visualización | campo `visualizations` o carpeta cuyo nombre coincide con una visualización registrada (`segment-tree`) |
+| Visualización | campo `visualizations` o título, carpeta o etiqueta que coincide con una visualización registrada (`segment-tree`, `fenwick-tree`, `dsu`) |
 
 Las subcarpetas `docs/`, `assets/`/`recursos/`, `visualizations/`, `variants/`/`variantes/` y `examples/`/`ejemplos/` dentro de una referencia forman parte de ella (no son referencias nuevas). El Markdown admite tablas, fórmulas KaTeX (`$…$`, `$$…$$`), bloques de código resaltados e imágenes relativas (`![árbol](assets/arbol.png)`, máximo 1 MiB; PNG, JPG, GIF, WebP o SVG). El HTML incrustado se ignora por seguridad.
 
@@ -124,6 +125,11 @@ visualizations:
     title: Suma por intervalos
     values: [5, 8, 6, 3, 2, 7, 2, 6]   # hasta 16 valores
     operation: sum                      # sum | min | max
+  - type: fenwick-tree
+    values: [3, 2, -1, 6]
+  - type: dsu
+    size: 6
+    unions: [[0, 1], [2, 3]]
 docs: [docs/01-introduccion.md, docs/02-intuicion.md]   # orden explícito (opcional)
 related: [algoritmos/dsu]
 ```

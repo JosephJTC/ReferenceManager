@@ -1,0 +1,41 @@
+/* Estilos comunes del contenedor de visualizaciones. Los colores de estado se exponen como variables
+   para que cada renderer los reutilice: var(--viz-active), var(--viz-visited)… */
+.viz{--viz-step-ms:900ms;--viz-node:var(--panel-2);--viz-stroke:var(--border-strong);--viz-active:#b7791f;--viz-active-stroke:#f6ad55;--viz-visited:var(--accent-soft);--viz-visited-stroke:var(--accent);--viz-used:#1f6f3a;--viz-used-stroke:var(--success);--viz-range:color-mix(in srgb,var(--warning) 18%,transparent);border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:12px;outline:none}
+[data-theme=light] .viz{--viz-active:#fbd38d;--viz-used:#c8f0d2}
+.viz:focus-visible{border-color:var(--accent)}
+.viz-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.viz-toolbar label{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--muted)}
+.viz-toolbar input{color:var(--text)}
+.viz-toolbar input[type=number]{width:72px}
+.viz-toolbar input:not([type=number]){width:220px}
+.player-controls{display:flex;align-items:center;gap:4px;margin:10px 0;flex-wrap:wrap}
+.player-controls .icon-button{border:1px solid var(--border);padding:5px;color:var(--text)}
+.player-controls .icon-button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.player-controls input[type=range]{flex:1;min-width:120px;padding:0}
+.step-counter{font:12px var(--font-code);color:var(--muted);min-width:90px}
+.speed{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+.viz-stage{overflow:auto;background:var(--bg);border-radius:6px;padding:8px;display:flex;flex-direction:column;align-items:center}
+.viz-stage svg{width:100%;height:auto}
+.viz-stage svg text{text-anchor:middle;fill:var(--text);font-family:var(--font-code)}
+/* Clases de estado listas para usar en <g className="viz-node active"> y en celdas de arreglos. */
+.viz-node rect,.viz-node circle{fill:var(--viz-node);stroke:var(--viz-stroke);stroke-width:1.2;transition:fill calc(var(--viz-step-ms)*.25),stroke calc(var(--viz-step-ms)*.25),opacity calc(var(--viz-step-ms)*.25)}
+.viz-node.visited rect,.viz-node.visited circle{fill:var(--viz-visited);stroke:var(--viz-visited-stroke)}
+.viz-node.used rect,.viz-node.used circle{fill:var(--viz-used);stroke:var(--viz-used-stroke)}
+.viz-node.skipped rect,.viz-node.skipped circle{opacity:.35}
+.viz-node.active rect,.viz-node.active circle{fill:var(--viz-active);stroke:var(--viz-active-stroke);stroke-width:2.5}
+.viz-edge{stroke:var(--viz-stroke);stroke-width:1.4;transition:stroke calc(var(--viz-step-ms)*.25)}.viz-edge.visited{stroke:var(--accent)}
+.viz-value{font-weight:700;font-size:13px}.viz-caption{font-size:9px;fill:var(--muted)!important}
+.viz-array{display:flex;gap:2px;margin-top:8px;flex-wrap:wrap;justify-content:center}
+.viz-array div{display:flex;flex-direction:column;align-items:center;min-width:38px;border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:var(--font-code);transition:background calc(var(--viz-step-ms)*.25)}
+.viz-array small{font-size:9px}
+.viz-array .in-range{border-color:var(--warning);background:var(--viz-range)}
+.viz-array .active{border-color:var(--viz-active-stroke);background:var(--viz-active)}
+.viz-explain{margin-top:10px;padding:8px 10px;border-left:3px solid var(--accent);background:var(--panel-2);line-height:1.55;min-height:40px}
+.viz-result{font-family:var(--font-code);color:var(--success);margin-left:6px}
+.viz-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:11px;color:var(--muted)}
+.lg::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px;border:1px solid var(--border-strong)}
+.lg.active::before{background:var(--viz-active)}.lg.visited::before{background:var(--viz-visited);border-color:var(--viz-visited-stroke)}.lg.used::before{background:var(--viz-used)}.lg.skipped::before{opacity:.35;background:var(--panel-2)}.lg.range::before{background:color-mix(in srgb,var(--warning) 30%,transparent);border-color:var(--warning)}
+.viz-debug{margin-top:8px;font-size:11px;color:var(--muted)}
+.viz-debug pre{max-height:220px;overflow:auto;background:var(--bg);padding:8px;border-radius:6px;font:11px var(--font-code);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}
+.viz-gallery{width:min(980px,96vw)}
+.viz-gallery select{margin:0 0 10px}
