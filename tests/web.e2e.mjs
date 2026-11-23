@@ -84,6 +84,32 @@ try {
     const before = await page.locator('.step-counter').textContent();
     await page.getByRole('button', { name: 'Paso siguiente' }).click();
     assert.notEqual(await page.locator('.step-counter').textContent(), before);
+    await page.getByRole('button', { name: 'Paso anterior' }).click();
+    assert.equal(await page.locator('.step-counter').textContent(), before);
+    // Consulta con datos inválidos: se informa sin romper la vista; al corregir vuelve a funcionar.
+    await page.locator('.viz').getByLabel('Acción').selectOption('query');
+    await page.locator('.viz').getByLabel('Valores').fill('1, x');
+    await page.locator('.viz').getByRole('button', { name: 'Ejecutar' }).click();
+    await page.locator('.viz [role=alert]').waitFor();
+    await page.locator('.viz').getByLabel('Valores').fill('4, 1, 7, 3, 9, 2');
+    await page.locator('.viz').getByRole('button', { name: 'Ejecutar' }).click();
+    await page.locator('.viz [role=alert]').waitFor({ state: 'detached' });
+    await page.locator('.viz-stage .viz-node').first().waitFor();
+    assert.equal(await page.locator('.viz-stage .viz-node').count(), 11);
+    // Galería: todas las visualizaciones registradas se cargan y se descargan al cambiar.
+    await page.getByRole('menuitem', { name: 'Herramientas', exact: true }).click();
+    await page.getByRole('menuitem', { name: /Galería de visualizaciones/ }).click();
+    const gallery = page.locator('dialog.viz-gallery');
+    for (const id of ['segment-tree', 'fenwick-tree', 'dsu']) {
+      await gallery.getByLabel('Visualización', { exact: true }).selectOption(id);
+      await gallery.locator(`.viz[data-visualization="${id}"] .viz-stage svg`).waitFor({ timeout: 15000 });
+      assert.equal(await gallery.locator('.viz').count(), 1);
+      const first = await gallery.locator('.viz-explain').textContent();
+      await gallery.getByRole('button', { name: 'Paso siguiente' }).click();
+      assert.notEqual(await gallery.locator('.viz-explain').textContent(), first);
+    }
+    await gallery.getByRole('button', { name: 'Cerrar' }).click();
+    await gallery.waitFor({ state: 'detached' });
     // Menú Ver: tema claro.
     const theme = await page.evaluate(() => document.documentElement.dataset.theme);
     await page.getByRole('menuitem', { name: 'Ver', exact: true }).click();
