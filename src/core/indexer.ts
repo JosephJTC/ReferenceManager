@@ -1,7 +1,7 @@
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 import type { Collection, Metadata, Reference, TextFile } from '../shared/types.js';
-import { codeExtensions, textExtensions, extensionOf, isMetadataFile, collator } from '../shared/formats.js';
+import { codeExtensions, textExtensions, extensionOf, isMetadataFile, isIgnoredName, isRepositoryDocument, collator } from '../shared/formats.js';
 import {
   ignoredDirectories, textLimit, metadataLimit, indexLimit, entryLimit,
   normalizeRelative, joinRelative, parentOf, baseName, sha256Hex,
@@ -89,7 +89,7 @@ export class LibraryIndexer {
     const directories = new Map<string, ProviderEntry[]>();
     for (const entry of list.entries) {
       const segments = entry.path.split('/');
-      if (segments.some(part => ignored.has(part))) continue;
+      if (segments.some(part => ignored.has(part) || isIgnoredName(part))) continue;
       if (collection.entries.length >= entryLimit) break;
       const parent = parentOf(entry.path);
       if (!directories.has(parent)) directories.set(parent, []);
@@ -107,7 +107,7 @@ export class LibraryIndexer {
       const metadataFile = metadataFiles[0];
       const code = files.filter(file => codeExtensions.has(extensionOf(file)));
       const notes = files.filter(file => ['.md', '.txt'].includes(extensionOf(file)));
-      if (!metadataFile && !code.length && !notes.length) continue;
+      if (!metadataFile && !code.length && notes.every(isRepositoryDocument)) continue;
       const warnings: string[] = [];
       const sizes = new Map<string, ProviderEntry>(files.map(file => [file, this.entry(file)!]));
       const available = Math.max(0, Math.min(1000000, Math.floor((indexLimit - indexedBytes) / 2)));

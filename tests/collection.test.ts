@@ -32,6 +32,16 @@ test('descubre jerarquías arbitrarias, referencias padre e hijas y notas sin c�
     assert.ok(result.references.every(ref => !ref.hasMetadata));
   });
 });
+test('omite archivos ocultos y no crea referencias solo con README o LICENSE', async () => {
+  await fixture({ 'README.md': '# Repositorio', 'LICENSE.txt': 'MIT', '.gitignore': 'dist', 'grafos/.gitkeep': '', 'grafos/README.md': '# Grafos', 'grafos/bfs/code.cpp': 'int bfs;', 'grafos/bfs/README.md': '# BFS', 'ideas/notes.md': '# Ideas', '.github/notes.md': '# Oculto' }, async service => {
+    const result = await service.scan();
+    assert.deepEqual(result.references.map(ref => ref.path).sort(), ['grafos/bfs', 'ideas']);
+    assert.deepEqual(result.references.find(ref => ref.path === 'grafos/bfs')?.files, ['grafos/bfs/code.cpp', 'grafos/bfs/README.md']);
+    assert.ok(!result.entries.some(entry => entry.name.startsWith('.')));
+    assert.ok(result.entries.some(entry => entry.path === 'README.md'));
+    assert.ok(result.entries.some(entry => entry.directory && entry.path === 'grafos'));
+  });
+});
 test('valida YAML y conserva campos personalizados sin exigir campos opcionales', () => {
   const valid = parseMetadata('title: Árbol\ncustom:\n  dificultad_personal: 7');
   assert.equal(valid.metadata.title, 'Árbol');
