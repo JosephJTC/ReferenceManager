@@ -97,6 +97,14 @@ export class LibraryIndexer {
       collection.entries.push({ path: entry.path, name: baseName(entry.path), directory: entry.directory });
       if (collection.entries.length >= entryLimit) { collection.warnings.push('Se alcanzó el límite de 100 000 elementos. Abre una carpeta más específica. La exploración es parcial.'); break; }
     }
+    if (!this.writable) {
+      const nonEmpty = new Set<string>();
+      for (const entry of collection.entries) {
+        if (entry.directory) continue;
+        for (let parent = parentOf(entry.path); parent && !nonEmpty.has(parent); parent = parentOf(parent)) nonEmpty.add(parent);
+      }
+      collection.entries = collection.entries.filter(entry => !entry.directory || nonEmpty.has(entry.path));
+    }
     const nextCache = new Map<string, { signature: string; reference: Reference }>();
     let indexedBytes = 0, metadataBytes = 0, cacheHits = 0;
     const dirPaths = [...directories.keys()].sort((a, b) => collator.compare(a, b));

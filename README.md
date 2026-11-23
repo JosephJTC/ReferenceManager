@@ -86,7 +86,7 @@ npm run preview    # sirve dist/ localmente
 
 ## 8. Referencias y metadatos
 
-Una referencia es una carpeta; se reconocen archivos de código (`.cpp`, `.cc`, `.c`, `.h`, `.hpp`, `.py`, `.java`, `.js`, `.ts`, `.rs`, `.go`, `.cs`, `.kt`, `.rb`, `.swift`), notas (`.md`, `.txt`) y metadatos (`metadata.yaml` o `metadata.yml`). Se omiten los archivos y carpetas ocultos (`.gitkeep`, `.gitignore`, `.github`, …), y un `README`, `LICENSE`, `CHANGELOG` o `CONTRIBUTING` por sí solo no convierte una carpeta en referencia; dentro de una referencia sí se muestra como notas. Solo se pueden editar `.md`, `.yaml` y `.yml`; el código fuente es de solo lectura.
+Una referencia es una carpeta; se reconocen archivos de código (`.cpp`, `.cc`, `.c`, `.h`, `.hpp`, `.py`, `.java`, `.js`, `.ts`, `.rs`, `.go`, `.cs`, `.kt`, `.rb`, `.swift`), notas (`.md`, `.txt`) y metadatos (`metadata.yaml` o `metadata.yml`). Se omiten los archivos y carpetas ocultos (`.gitkeep`, `.gitignore`, `.github`, …), y un `README`, `LICENSE`, `CHANGELOG` o `CONTRIBUTING` por sí solo no convierte una carpeta en referencia; dentro de una referencia sí se muestra como notas. En las bibliotecas de solo lectura (GitHub, instantáneas) no se muestran las carpetas que quedan sin archivos; en carpetas locales editables se conservan para poder crear contenido en ellas. Solo se pueden editar `.md`, `.yaml` y `.yml`; el código fuente es de solo lectura.
 
 Campos habituales de `metadata.yaml` (todos opcionales salvo que se indique):
 
