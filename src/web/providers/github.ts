@@ -1,7 +1,7 @@
 import type { LibraryProvider, ProviderEntry } from '../../core/provider.js';
 import { validateRelativePath } from '../../core/provider.js';
 
-export type GitHubConfig = { owner: string; repo: string; branch?: string; subpath?: string };
+export type GitHubConfig = { owner: string; repo: string; branch?: string; subpath?: string; token?: string };
 
 const ownerPattern = /^[A-Za-z0-9-]{1,39}$/;
 const repoPattern = /^[A-Za-z0-9._-]{1,100}$/;
@@ -19,7 +19,7 @@ export function parseGitHubInput(input: { url?: string; owner?: string; repo?: s
     else {
       let parsed: URL;
       try { parsed = new URL(url); } catch { throw new Error('La URL del repositorio no es válida. Usa https://github.com/propietario/repositorio o propietario/repositorio.'); }
-      if (parsed.host !== 'github.com' && parsed.host !== 'www.github.com') throw new Error('Solo se admiten repositorios públicos de github.com.');
+      if (parsed.host !== 'github.com' && parsed.host !== 'www.github.com') throw new Error('Solo se admiten repositorios de github.com.');
       if (parsed.protocol !== 'https:') throw new Error('La URL del repositorio debe usar HTTPS.');
       const parts = parsed.pathname.split('/').filter(Boolean);
       if (parts.length < 2) throw new Error('La URL debe incluir propietario y repositorio.');
@@ -50,21 +50,48 @@ export type GitHubCache = {
   set(key: string, value: unknown): Promise<void>;
 };
 
-async function request(fetchImpl: FetchLike, url: string): Promise<Response> {
+const tokenHint = 'Si el repositorio es privado, configura un token de acceso (fine-grained PAT con permiso Contents: read-only).';
+
+export function normalizeGitHubToken(token?: string): string | undefined {
+  const value = token?.trim();
+  if (!value) return undefined;
+  if (!/^[A-Za-z0-9_]{1,255}$/.test(value)) throw new Error('El token de acceso no es válido.');
+  return value;
+}
+
+async function request(fetchImpl: FetchLike, url: string, token?: string): Promise<Response> {
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
   let response: Response;
-  try { response = await fetchImpl(url, { headers: { Accept: 'application/vnd.github+json' } }); }
+  try { response = await fetchImpl(url, { headers }); }
   catch { throw new Error('No hay conexión con GitHub. Comprueba tu red e inténtalo de nuevo.'); }
-  if (response.status === 404) throw new Error('El repositorio no existe, es privado o la rama indicada no está disponible.');
+  if (response.status === 401) throw new Error('GitHub rechazó el token de acceso (401). Comprueba que no haya caducado ni sido revocado.');
+  if (response.status === 404) {
+    throw new Error(token
+      ? 'El repositorio no existe, es privado y el token no tiene acceso, o la rama indicada no está disponible.'
+      : `El repositorio no existe, es privado o la rama indicada no está disponible. ${tokenHint}`);
+  }
   if (response.status === 403 || response.status === 429) {
     if (response.headers.get('x-ratelimit-remaining') === '0' || response.status === 429) {
       const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
       const when = reset ? new Date(reset).toLocaleTimeString('es') : 'pronto';
-      throw new Error(`Se agotó el límite de solicitudes de GitHub (60 por hora sin autenticación). Se restablece a las ${when}.`);
+      throw new Error(token
+        ? `Se agotó el límite de solicitudes de GitHub para este token. Se restablece a las ${when}.`
+        : `Se agotó el límite de solicitudes de GitHub (60 por hora sin autenticación). Se restablece a las ${when}.`);
     }
-    throw new Error('GitHub rechazó la solicitud (403). El repositorio puede requerir autenticación.');
+    throw new Error(token
+      ? 'GitHub rechazó la solicitud (403). El token no tiene permiso Contents: read-only sobre este repositorio.'
+      : `GitHub rechazó la solicitud (403). ${tokenHint}`);
   }
   if (!response.ok) throw new Error(`GitHub respondió con un error (${response.status}).`);
   return response;
+}
+
+function decodeBase64(content: string): Uint8Array {
+  const binary = atob(content.replace(/\s/g, ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 export class GitHubProvider implements LibraryProvider {
@@ -84,12 +111,14 @@ export class GitHubProvider implements LibraryProvider {
     this.commit = options.commit || '';
   }
 
+  private get(url: string) { return request(this.fetchImpl, url, this.config.token); }
+
   get location() { return `https://github.com/${this.config.owner}/${this.config.repo}`; }
 
   async branches(): Promise<{ branches: string[]; defaultBranch: string }> {
     const { owner, repo } = this.config;
-    const info = await (await request(this.fetchImpl, `https://api.github.com/repos/${owner}/${repo}`)).json() as { default_branch: string };
-    const list = await (await request(this.fetchImpl, `https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`)).json() as { name: string }[];
+    const info = await (await this.get(`https://api.github.com/repos/${owner}/${repo}`)).json() as { default_branch: string };
+    const list = await (await this.get(`https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`)).json() as { name: string }[];
     return { branches: list.map(item => item.name), defaultBranch: info.default_branch };
   }
 
@@ -98,12 +127,12 @@ export class GitHubProvider implements LibraryProvider {
     let branch = this.config.branch;
     if (!branch) {
       if (!this.defaultBranch) {
-        const info = await (await request(this.fetchImpl, `https://api.github.com/repos/${owner}/${repo}`)).json() as { default_branch: string };
+        const info = await (await this.get(`https://api.github.com/repos/${owner}/${repo}`)).json() as { default_branch: string };
         this.defaultBranch = info.default_branch;
       }
       branch = this.defaultBranch;
     }
-    const data = await (await request(this.fetchImpl, `https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch!)}`)).json() as { commit: { sha: string } };
+    const data = await (await this.get(`https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch!)}`)).json() as { commit: { sha: string } };
     return data.commit.sha;
   }
 
@@ -119,7 +148,7 @@ export class GitHubProvider implements LibraryProvider {
 
   private async tree(sha: string, recursive: boolean) {
     const { owner, repo } = this.config;
-    return (await (await request(this.fetchImpl, `https://api.github.com/repos/${owner}/${repo}/git/trees/${sha}${recursive ? '?recursive=1' : ''}`)).json()) as {
+    return (await (await this.get(`https://api.github.com/repos/${owner}/${repo}/git/trees/${sha}${recursive ? '?recursive=1' : ''}`)).json()) as {
       sha: string; truncated?: boolean;
       tree: { path: string; type: 'blob' | 'tree' | 'commit'; sha: string; size?: number }[];
     };
@@ -139,7 +168,9 @@ export class GitHubProvider implements LibraryProvider {
     const cacheKey = `tree:${this.config.owner}/${this.config.repo}:${commit}:${this.config.subpath || ''}`;
     let entries = await this.cache?.get(cacheKey) as ProviderEntry[] | undefined;
     let truncated = false;
-    if (!entries) {
+    if (entries) {
+      for (const entry of entries) if (!entry.directory && entry.version) this.blobs.set(entry.path, { sha: entry.version, size: entry.size });
+    } else {
       entries = [];
       this.blobs.clear();
       const data = await this.tree(commit, true);
@@ -187,8 +218,15 @@ export class GitHubProvider implements LibraryProvider {
       const cached = await this.cache?.get(cacheKey) as number[] | undefined;
       if (cached) return new Uint8Array(cached);
     }
+    const { owner, repo, token } = this.config;
+    if (token && blob) {
+      const data = await (await this.get(`https://api.github.com/repos/${owner}/${repo}/git/blobs/${blob.sha}`)).json() as { content?: string; encoding?: string };
+      if (data.encoding !== 'base64' || typeof data.content !== 'string') throw new Error('GitHub devolvió el archivo en un formato inesperado.');
+      const bytes = decodeBase64(data.content);
+      if (cacheKey) await this.cache?.set(cacheKey, [...bytes]);
+      return bytes;
+    }
     const commit = await this.currentCommit();
-    const { owner, repo } = this.config;
     const sub = this.config.subpath;
     const absolute = sub ? `${sub}/${path}` : path;
     const encoded = absolute.split('/').map(segment => encodeURIComponent(segment)).join('/');
@@ -196,7 +234,7 @@ export class GitHubProvider implements LibraryProvider {
     try { response = await this.fetchImpl(`https://raw.githubusercontent.com/${owner}/${repo}/${commit}/${encoded}`); }
     catch { throw new Error('No hay conexión con GitHub. Comprueba tu red e inténtalo de nuevo.'); }
     if (!response.ok) {
-      if (response.status === 404) throw new Error('El archivo ya no existe en el commit indexado. Actualiza la biblioteca.');
+      if (response.status === 404) throw new Error(token ? 'El archivo ya no existe en el commit indexado. Actualiza la biblioteca.' : `El archivo ya no existe en el commit indexado o el repositorio es privado. Actualiza la biblioteca. ${tokenHint}`);
       if (response.status === 403 || response.status === 429) throw new Error('Se agotó el límite de solicitudes de GitHub. Actualiza más tarde.');
       throw new Error(`No se pudo descargar el archivo (${response.status}).`);
     }

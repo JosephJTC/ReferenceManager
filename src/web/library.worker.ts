@@ -14,7 +14,7 @@ import { ExampleProvider } from './providers/example.js';
 import { idbGet, idbPut } from './idb.js';
 
 export type ProviderDescriptor =
-  | { kind: 'github'; owner: string; repo: string; branch?: string; subpath?: string }
+  | { kind: 'github'; owner: string; repo: string; branch?: string; subpath?: string; token?: string }
   | { kind: 'local-fs'; handle: FileSystemDirectoryHandle }
   | { kind: 'local-snapshot'; files: File[] }
   | { kind: 'example'; base: string };
@@ -31,7 +31,7 @@ let descriptor: ProviderDescriptor | undefined;
 
 function buildProvider(input: ProviderDescriptor): LibraryProvider {
   switch (input.kind) {
-    case 'github': return new GitHubProvider({ owner: input.owner, repo: input.repo, branch: input.branch, subpath: input.subpath }, { cache: ghCache });
+    case 'github': return new GitHubProvider({ owner: input.owner, repo: input.repo, branch: input.branch, subpath: input.subpath, token: input.token }, { cache: ghCache });
     case 'local-fs': {
       const local = new LocalFsProvider(input.handle);
       void local.startWatching();
