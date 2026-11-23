@@ -16,7 +16,7 @@ export type LibrarySummary = {
   branch?: string; subpath?: string; createdAt: number; updatedAt: number;
   status: LibraryStatus; statusMessage?: string;
 };
-export type GitHubLibraryInput = { url?: string; owner?: string; repo?: string; branch?: string; subpath?: string; name?: string; description?: string };
+export type GitHubLibraryInput = { url?: string; owner?: string; repo?: string; branch?: string; subpath?: string; token?: string; name?: string; description?: string };
 export type PracticeSelection = { referenceId: string; file: string };
 
 export interface Api {

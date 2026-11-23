@@ -4,11 +4,11 @@ import type {
 } from '../shared/types.js';
 import type { DocumentRequest, DocumentPreview } from '../shared/document.js';
 import type { ProviderDescriptor } from './library.worker.js';
-import { parseGitHubInput } from './providers/github.js';
+import { parseGitHubInput, normalizeGitHubToken } from './providers/github.js';
 import {
   listLibraryRecords, getLibraryRecord, saveLibraryRecord, removeLibraryRecord,
   getHandle, setHandle, getPractice, setPractice, getSetting, setSetting,
-  newLibraryRecord, type LibraryRecord
+  newLibraryRecord, librarySummary, githubDescriptor, libraryIndexSource, type LibraryRecord
 } from './libraries.js';
 import { generatePreview, storedDocument, printStored } from './document.js';
 
@@ -50,10 +50,7 @@ const ok = async <T>(task: () => Promise<T> | T): Promise<Result<T>> => {
   catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Ocurrió un error inesperado.' }; }
 };
 
-const summary = (record: LibraryRecord): LibrarySummary => {
-  const { settings, owner, repo, commit, ...rest } = record;
-  return rest;
-};
+const summary = (record: LibraryRecord): LibrarySummary => librarySummary(record);
 
 async function mark(id: string, status: LibraryRecord['status'], statusMessage?: string) {
   const record = await getLibraryRecord(id);
@@ -67,8 +64,7 @@ async function descriptorFor(record: LibraryRecord, options: { files?: File[] } 
   switch (record.kind) {
     case 'example': return { kind: 'example', base: externalBase };
     case 'github': {
-      if (!record.owner || !record.repo) throw new Error('La biblioteca no tiene repositorio asociado.');
-      return { kind: 'github', owner: record.owner, repo: record.repo, branch: record.branch, subpath: record.subpath };
+      return githubDescriptor(record);
     }
     case 'local-fs': {
       const handle = await getHandle(record.id);
@@ -175,15 +171,21 @@ export function createApi(base: string): Api {
     listLibraries: () => ok(async () => (await listLibraryRecords()).map(summary)),
     addGitHubLibrary: (input: GitHubLibraryInput) => ok(async () => {
       const parsed = parseGitHubInput(input);
+      const token = normalizeGitHubToken(input.token);
       const record = newLibraryRecord({
         name: input.name?.trim() || `${parsed.owner}/${parsed.repo}`,
         description: input.description?.trim() || undefined,
         kind: 'github', location: `https://github.com/${parsed.owner}/${parsed.repo}`,
         branch: parsed.branch, subpath: parsed.subpath,
-        owner: parsed.owner, repo: parsed.repo
+        owner: parsed.owner, repo: parsed.repo, token
       });
       await saveLibraryRecord(record);
-      await openRecord(record.id);
+      try {
+        await openRecord(record.id);
+      } catch (error) {
+        await removeLibraryRecord(record.id).catch(() => undefined);
+        throw error;
+      }
       return summary(record);
     }),
     addLocalLibrary: () => ok(async () => {
@@ -238,7 +240,7 @@ export function createApi(base: string): Api {
     }),
     listBranches: (input: GitHubLibraryInput) => ok(async () => {
       const parsed = parseGitHubInput(input);
-      const provider = { kind: 'github', owner: parsed.owner, repo: parsed.repo, branch: parsed.branch, subpath: parsed.subpath } as ProviderDescriptor;
+      const provider: ProviderDescriptor = { kind: 'github', owner: parsed.owner, repo: parsed.repo, branch: parsed.branch, subpath: parsed.subpath, token: normalizeGitHubToken(input.token) };
       return client.request<{ branches: string[]; defaultBranch: string }>('branches', provider);
     }),
     capabilities: () => ok(async () => ({
@@ -253,14 +255,7 @@ export function createApi(base: string): Api {
       const selected = selection || await getPractice(activeRecord.id);
       const commit = await client.request<string>('latestCommit').catch(() => '');
       const index = await client.request<unknown>('exportIndex', {
-        library: {
-          id: activeRecord.id, name: activeRecord.name,
-          source: {
-            kind: activeRecord.kind,
-            url: activeRecord.kind === 'github' ? activeRecord.location : undefined,
-            branch: activeRecord.branch, commit: commit || undefined, subpath: activeRecord.subpath
-          }
-        },
+        library: libraryIndexSource(activeRecord, commit),
         selection: selected
       });
       return { filename: 'referencemanager.library.json', json: JSON.stringify(index, null, 2) };

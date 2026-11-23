@@ -1,4 +1,4 @@
-import type { LibraryKind, LibraryStatus } from '../shared/types.js';
+import type { LibraryKind, LibraryStatus, LibrarySummary } from '../shared/types.js';
 import type { PracticeSelection } from '../shared/types.js';
 import { idbGet, idbGetAll, idbPut, idbDelete } from './idb.js';
 
@@ -7,8 +7,29 @@ export type LibraryRecord = {
   branch?: string; subpath?: string; createdAt: number; updatedAt: number;
   status: LibraryStatus; statusMessage?: string;
   settings: { ignore: string[]; maxFileBytes: number };
-  owner?: string; repo?: string; commit?: string;
+  owner?: string; repo?: string; commit?: string; token?: string;
 };
+
+export function librarySummary(record: LibraryRecord): LibrarySummary {
+  const { settings, owner, repo, commit, token, ...rest } = record;
+  return rest;
+}
+
+export function githubDescriptor(record: LibraryRecord) {
+  if (!record.owner || !record.repo) throw new Error('La biblioteca no tiene repositorio asociado.');
+  return { kind: 'github' as const, owner: record.owner, repo: record.repo, branch: record.branch, subpath: record.subpath, token: record.token };
+}
+
+export function libraryIndexSource(record: LibraryRecord, commit?: string) {
+  return {
+    id: record.id, name: record.name,
+    source: {
+      kind: record.kind,
+      url: record.kind === 'github' ? record.location : undefined,
+      branch: record.branch, commit: commit || undefined, subpath: record.subpath
+    }
+  };
+}
 
 export async function listLibraryRecords(): Promise<LibraryRecord[]> {
   const records = await idbGetAll<LibraryRecord>('libraries');

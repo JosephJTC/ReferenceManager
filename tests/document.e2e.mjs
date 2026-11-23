@@ -140,7 +140,7 @@ try {
     for (const file of Object.keys(files)) {
       const dir = file.split('/').slice(0, -1).join('/');
       if (!directories.has(dir)) { directories.add(dir); tree.push({ path: dir, type: 'tree', sha: 'd' + dir.length }); }
-      tree.push({ path: file, type: 'blob', sha: 's' + file.length, size: files[file].length });
+      tree.push({ path: file, type: 'blob', sha: 's' + tree.length, size: files[file].length });
     }
     await context.route('https://api.github.com/**', route => {
       const requestUrl = route.request().url();

@@ -26,6 +26,7 @@ export function LibrariesPanel({ busy, onBusy, onOpen, onSnapshot, onNotice }: P
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('');
   const [subpath, setSubpath] = useState('');
+  const [token, setToken] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [branches, setBranches] = useState<string[]>([]);
@@ -53,16 +54,16 @@ export function LibrariesPanel({ busy, onBusy, onOpen, onSnapshot, onNotice }: P
   async function connectGitHub(event: React.FormEvent) {
     event.preventDefault();
     await run(async () => {
-      const result = await window.api.addGitHubLibrary({ url: url || undefined, owner: owner || undefined, repo: repo || undefined, branch: branch || undefined, subpath: subpath || undefined, name: name || undefined, description: description || undefined });
-      if (result.ok) { setMode('none'); setUrl(''); setOwner(''); setRepo(''); setBranch(''); setSubpath(''); setName(''); setDescription(''); onNotice(`Biblioteca conectada: ${result.value.name}`); await onOpen(result.value.id); }
+      const result = await window.api.addGitHubLibrary({ url: url || undefined, owner: owner || undefined, repo: repo || undefined, branch: branch || undefined, subpath: subpath || undefined, token: token || undefined, name: name || undefined, description: description || undefined });
+      if (result.ok) { setMode('none'); setUrl(''); setOwner(''); setRepo(''); setBranch(''); setSubpath(''); setToken(''); setName(''); setDescription(''); onNotice(`Biblioteca conectada: ${result.value.name}`); await onOpen(result.value.id); }
       return result;
     });
   }
 
   async function loadBranches() {
     await run(async () => {
-      const result = await window.api.listBranches({ url: url || undefined, owner: owner || undefined, repo: repo || undefined });
-      if (result.ok) { setBranches(result.value.branches); setDefaultBranch(result.value.defaultBranch); if (!branch) setBranch(result.value.defaultBranch); }
+      const result = await window.api.listBranches({ url: url || undefined, owner: owner || undefined, repo: repo || undefined, token: token || undefined });
+      if (result.ok) { setBranches(result.value.branches); setDefaultBranch(result.value.defaultBranch); if (!branch) setBranch(result.value.defaultBranch); onNotice(`Ramas cargadas: ${result.value.branches.length}.`); }
       return result;
     });
   }
@@ -86,7 +87,7 @@ export function LibrariesPanel({ busy, onBusy, onOpen, onSnapshot, onNotice }: P
   const date = (value: number) => new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short' }).format(value);
   return <section className="libraries-panel">
     <h2>Bibliotecas</h2>
-    <p className="muted">Conecta repositorios públicos de GitHub, carpetas locales o la colección de ejemplos. Cada biblioteca se indexa por separado.</p>
+    <p className="muted">Conecta repositorios de GitHub (públicos o privados con token), carpetas locales o la colección de ejemplos. Cada biblioteca se indexa por separado.</p>
     <div className="actions library-actions">
       <button disabled={busy} onClick={() => setMode(mode === 'github' ? 'none' : 'github')}>Conectar repositorio GitHub</button>
       <button disabled={busy || !supportsLocal} title={supportsLocal ? '' : 'Este navegador no permite abrir carpetas directamente'} onClick={() => run(async () => { const result = await window.api.addLocalLibrary(); if (result.ok && result.value) { onNotice(`Carpeta conectada: ${result.value.name}`); await onOpen(result.value.id); } return result; })}>Seleccionar carpeta local</button>
@@ -98,6 +99,8 @@ export function LibrariesPanel({ busy, onBusy, onOpen, onSnapshot, onNotice }: P
       <label>URL del repositorio<input value={url} onChange={event => setUrl(event.target.value)} placeholder="https://github.com/propietario/repositorio o propietario/repositorio" /></label>
       <div className="settings-pair"><label>Propietario<input value={owner} onChange={event => setOwner(event.target.value)} placeholder="opcional si usas URL" /></label><label>Repositorio<input value={repo} onChange={event => setRepo(event.target.value)} /></label></div>
       <div className="settings-pair"><label>Rama<select value={branch} onChange={event => setBranch(event.target.value)}><option value="">{defaultBranch ? `Predeterminada (${defaultBranch})` : 'Predeterminada'}</option>{branches.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Subcarpeta (opcional)<input value={subpath} onChange={event => setSubpath(event.target.value)} placeholder="ruta/dentro/del/repo" /></label></div>
+      <label>Token de acceso (repos privados)<input type="password" autoComplete="off" spellCheck={false} value={token} onChange={event => setToken(event.target.value)} placeholder="opcional" /></label>
+      <small className="muted">Se almacena solo en este navegador. Usa un fine-grained PAT limitado a este repositorio con permiso Contents: read-only.</small>
       <button type="button" disabled={busy} onClick={loadBranches}>Cargar ramas</button>
       <div className="settings-pair"><label>Nombre de la biblioteca<input value={name} onChange={event => setName(event.target.value)} placeholder="opcional" /></label><label>Descripción<input value={description} onChange={event => setDescription(event.target.value)} placeholder="opcional" /></label></div>
       <button disabled={busy} type="submit">Conectar y abrir</button>

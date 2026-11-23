@@ -6,7 +6,7 @@ Aplicación web estática, en español, para consultar y mantener algoritmos, so
 
 La aplicación organiza el contenido en **bibliotecas**. Desde la pestaña «Bibliotecas» puedes:
 
-- **Conectar un repositorio público de GitHub** (solo lectura): pega la URL (`https://github.com/owner/repo`, con o sin `/tree/rama/ruta`) o el formato `owner/repo`, elige la rama y, opcionalmente, una subcarpeta.
+- **Conectar un repositorio de GitHub** (solo lectura): pega la URL (`https://github.com/owner/repo`, con o sin `/tree/rama/ruta`) o el formato `owner/repo`, elige la rama y, opcionalmente, una subcarpeta. Para repositorios privados añade un token de acceso: un fine-grained PAT limitado al repositorio con permiso `Contents: read-only`. El token se guarda solo en el IndexedDB de este navegador y nunca se incluye en URLs ni en el índice exportado.
 - **Seleccionar una carpeta local** (lectura y escritura, en navegadores compatibles con File System Access: Chrome, Edge y derivados). Los cambios se guardan directamente en tus archivos.
 - **Seleccionar una instantánea local** (solo lectura, en navegadores sin File System Access: Firefox, Safari, móviles). Es una copia temporal en memoria; no se conserva al recargar.
 - **Abrir la colección de ejemplos** incluida en la aplicación (solo lectura).
@@ -34,7 +34,7 @@ manager/
 - **Proveedores (`src/web/providers`)**: todos implementan el mismo contrato (`list`, `read`, y opcionalmente `write`, `mkdir`, `rename`, `externalUrl`) y declaran sus capacidades (`write`, `rename`, `watch`, `refresh`). El indexador no sabe de dónde vienen los bytes.
 - **Indexación (`src/core/indexer.ts`)**: recorre la lista del proveedor, valida rutas, omite binarios y archivos mayores de 2 MiB sin descargarlos, lee `metadata.yaml`/`.yml`, calcula SHA-256 y cachea por firma de versión. Se ejecuta en un *web worker* (`src/web/library.worker.ts`) para no bloquear la interfaz; la búsqueda y la composición de documentos también corren ahí.
 - **Búsqueda (`src/shared/search.ts`)**: misma lógica de siempre (acentos insensibles, código, notas, títulos y etiquetas) más filtros por extensión, categoría (metadato `category` o primer segmento de la ruta), etiqueta, lenguaje y carpeta.
-- **Lector GitHub (`src/web/providers/github.ts`)**: API pública sin credenciales. Resuelve la rama a un commit fijo, lista el árbol recursivo (con alternativa por carpetas si viene truncado) y lee archivos por `raw.githubusercontent.com` anclados al commit. La caché del árbol y de los blobs se guarda en IndexedDB por sha, así que recargar no vuelve a descargar. Los errores se traducen: repositorio inexistente o privado, límite de peticiones con hora de restablecimiento, sin conexión, URL inválida.
+- **Lector GitHub (`src/web/providers/github.ts`)**: API pública sin credenciales o, si la biblioteca tiene token, con `Authorization: Bearer`. Resuelve la rama a un commit fijo, lista el árbol recursivo (con alternativa por carpetas si viene truncado) y lee archivos por `raw.githubusercontent.com` anclados al commit (con token, por `GET /repos/{owner}/{repo}/git/blobs/{sha}`). La caché del árbol y de los blobs se guarda en IndexedDB por sha, así que recargar no vuelve a descargar. Los errores se traducen: repositorio inexistente o privado, límite de peticiones con hora de restablecimiento, sin conexión, URL inválida.
 - **Acceso local (`src/web/providers/localfs.ts`)**: File System Access API. El permiso se guarda en IndexedDB; tras recargar puede pedirse «Conceder acceso» (el navegador exige un gesto del usuario). El guardado comprueba que el archivo no cambió desde la lectura (conflicto) y conserva BOM y fin de línea CRLF. Si el navegador implementa `FileSystemObserver`, la biblioteca se marca «con cambios» para actualizar manualmente.
 - **Referencias y metadatos**: una referencia es una carpeta con código y/o notas; `metadata.yaml` (o `.yml`) describe título, etiquetas y campos libres. Se conservan comentarios y campos desconocidos al guardar.
 - **Documentos (`src/core/documents`)**: el modelo selecciona referencias y genera un HTML imprimible paginado en una vista previa dentro de un `<iframe>` aislado (sin scripts). «Exportar PDF» abre el diálogo de impresión del navegador (elige «Guardar como PDF», márgenes «Ninguno», sin encabezados); también puedes descargar el HTML imprimible.
@@ -126,7 +126,7 @@ Las pruebas e2e sirven `dist/` bajo una subruta (`/ReferenceManager/`) para simu
 
 ## 11. Limitaciones conocidas
 
-- Sin autenticación de GitHub: solo repositorios públicos y 60 peticiones/hora por IP (los repositorios muy grandes pueden agotarlo en la primera indexación).
+- Sin token de GitHub: solo repositorios públicos y 60 peticiones/hora por IP (los repositorios muy grandes pueden agotarlo en la primera indexación). Con token el límite es el de la cuenta (5000/hora). El token no se puede cambiar desde la interfaz: elimina la conexión y vuelve a crearla.
 - Las instantáneas son de solo lectura y no persisten al recargar.
 - «Exportar PDF» depende del diálogo de impresión del navegador; hay que elegir «Guardar como PDF».
 - La detección de cambios automática (`FileSystemObserver`) solo existe en algunos navegadores; en los demás se actualiza manualmente con «Actualizar».
