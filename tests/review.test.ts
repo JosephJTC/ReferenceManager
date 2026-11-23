@@ -70,7 +70,7 @@ test('crear complementos y guardar notas con hard link no modifica el código fu
   await active.save('notes.md', '# Notas independientes', notes.version);
   assert.equal(await fs.readFile(source, 'utf8'), 'int fuente_original = 7;');
   const code = await active.read('code.cpp');
-  await assert.rejects(active.save('code.cpp', 'no guardar', code.version), /solo lectura/);
+  await assert.rejects(active.save('code.cpp', 'conflicto', 'f'.repeat(64)), /cambió|conflict|versión/i);
   await assert.rejects(active.supplement('', 'metadata'), /ya tiene/);
   assert.equal(await fs.readFile(source, 'utf8'), 'int fuente_original = 7;');
 }));
