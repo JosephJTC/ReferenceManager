@@ -21,7 +21,11 @@ export const documentSettingsSchema = z.object({
   pageNumbers: z.boolean(),
   header: z.string().max(200),
   footer: z.string().max(200),
-  metadataKeys: z.array(z.string().max(100)).max(100)
+  metadataKeys: z.array(z.string().max(100)).max(100),
+  orientation: z.enum(['portrait', 'landscape']).optional(),
+  codeFont: z.enum(['consolas', 'courier', 'dejavu', 'jetbrains']).optional(),
+  titlePage: z.boolean().optional(),
+  visualizations: z.boolean().optional()
 }).strict();
 export type DocumentSettings = z.infer<typeof documentSettingsSchema>;
 export const defaultDocumentSettings: DocumentSettings = {
@@ -30,7 +34,11 @@ export const defaultDocumentSettings: DocumentSettings = {
   toc: true, descriptions: true, notes: true, code: true, subtitles: true,
   lineNumbers: true, highlighting: true, pageBreaks: false, pageNumbers: true,
   header: 'Referencia de programación competitiva', footer: '',
-  metadataKeys: ['complexity', 'constraints', 'tags', 'language', 'source', 'url', 'author', 'difficulty']
+  metadataKeys: ['complexity', 'constraints', 'tags', 'language', 'source', 'url', 'author', 'difficulty'],
+  orientation: 'portrait', codeFont: 'consolas', titlePage: true, visualizations: true
+};
+export const codeFontFamilies: Record<NonNullable<DocumentSettings['codeFont']>, string> = {
+  consolas: "Consolas,'Courier New',monospace", courier: "'Courier New',Courier,monospace", dejavu: "'DejaVu Sans Mono','Liberation Mono',monospace", jetbrains: "'JetBrains Mono','Fira Code',Consolas,monospace"
 };
 export const compactDocumentSettings: DocumentSettings = {
   ...defaultDocumentSettings, margin: 10, fontSize: 8, codeFontSize: 6.5, lineHeight: 1.1, columns: 2

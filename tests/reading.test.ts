@@ -47,3 +47,8 @@ test('Segment Tree: construcción, consulta y actualización producen pasos corr
   assert.throws(() => parseSegmentValues(Array(17).fill(1).join(',')), /máximo/);
   assert.match(segmentTreeSvg([1, 2, 3], 'sum'), /^<svg[^>]*>.*>6<\/text>/);
 });
+
+test('el campo docs define el orden explícito de la explicación', () => {
+  const model = buildReadingModel(reference('r', ['r/docs/intuicion.md', 'r/docs/introduccion.md', 'r/a.cpp'], { docs: ['docs/intuicion.md', './docs/introduccion.md'] }));
+  assert.deepEqual(model.tabs[0].sections.map(section => section.file), ['r/docs/intuicion.md', 'r/docs/introduccion.md']);
+});

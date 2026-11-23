@@ -390,7 +390,7 @@ function App() {
     ] },
     { label: 'Ayuda', items: [
       { label: 'Atajos de teclado', shortcut: 'F1', action: () => setShortcutsOpen(true) },
-      { label: 'Formato de documentación', action: () => window.open('https://github.com/JosephJTC/ReferenceManager#formato-de-documentaci%C3%B3n', '_blank', 'noopener') }
+      { label: 'Formato de documentación', action: () => window.open('https://github.com/JosephJTC/ReferenceManager#formato-de-documentación', '_blank', 'noopener') }
     ] }
   ];
   const resultsList = <div className="results" aria-busy={search.searching}>

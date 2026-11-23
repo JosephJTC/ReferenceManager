@@ -96,6 +96,7 @@ export function buildReadingModel(reference: Reference): ReadingModel {
   const add = (tab: ReadingTabId, section: ReadingSection) => { if (!sections.has(tab)) sections.set(tab, []); sections.get(tab)!.push(section); };
   const visible: string[] = [], hidden: string[] = [];
   const order = new Map<string, number>();
+  const declaredDocs = (Array.isArray(reference.metadata.docs) ? reference.metadata.docs : []).filter((item): item is string => typeof item === 'string').map(item => (reference.path ? reference.path + '/' : '') + item.replace(/^\.\//, ''));
   for (const file of reference.files) {
     const extension = extensionOf(file);
     if (isAuxiliaryFile(file)) { hidden.push(file); continue; }
@@ -108,7 +109,7 @@ export function buildReadingModel(reference: Reference): ReadingModel {
     }
     if (!['.md', '.txt', '.tex'].includes(extension)) { add('examples', { file, kind: 'examples', label: file.split('/').pop()! }); continue; }
     const section = sectionOf(file, reference) || { kind: 'notes', label: isRepositoryDocument(file) ? 'Explicación' : (file.split('/').pop() || '').replace(/\.[^.]+$/, ''), tab: 'explanation' as const };
-    order.set(file, catalogOrder.get(section.kind) ?? 3.5);
+    order.set(file, declaredDocs.includes(file) ? declaredDocs.indexOf(file) - 1000 : catalogOrder.get(section.kind) ?? 3.5);
     add(section.tab, { file, kind: section.kind, label: section.label });
   }
   const complexity = readingComplexity(reference);

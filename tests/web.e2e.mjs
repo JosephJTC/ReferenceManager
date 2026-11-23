@@ -38,29 +38,61 @@ try {
     const page = await newPage(context);
     await page.goto(url);
     await page.getByRole('button', { name: 'Abrir ejemplos', exact: true }).first().click();
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 5, null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 6, null, { timeout: 30000 });
+    // Modo lectura: el árbol solo muestra carpetas y referencias.
+    assert.equal(await page.locator('.tree-file').count(), 0);
     await page.getByRole('button', { name: 'Plegar algoritmos', exact: true }).click();
-    assert.equal(await page.getByRole('button', { name: 'Plegar dsu', exact: true }).count(), 0);
+    assert.equal(await page.locator('.tree-reference').filter({ hasText: 'DSU' }).count(), 0);
     await page.getByRole('button', { name: 'Desplegar algoritmos', exact: true }).click();
     await page.getByLabel('Buscar referencias').fill('dsu');
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 1);
-    await page.locator('.reference').click();
-    await page.locator('.code code').waitFor();
-    assert.match(await page.locator('.code').textContent(), /DSU/);
-    await page.getByRole('button', { name: 'Copiar', exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 2);
+    await page.locator('.sidebar .reference').filter({ hasText: 'algoritmos/dsu' }).click();
+    await page.getByRole('tab', { name: /^Código/ }).click();
+    await page.locator('.code code').first().waitFor();
+    assert.match(await page.locator('.code').first().textContent(), /DSU/);
+    await page.locator('.code-toolbar').getByRole('button', { name: /Copiar/ }).click();
     assert.match(await page.evaluate(() => navigator.clipboard.readText()), /DSU/);
-    await page.getByRole('button', { name: 'Metadatos', exact: true }).click();
-    await page.locator('dl').waitFor();
+    // Modo edición: estructura completa, pestañas de archivos y metadatos.
+    await page.getByRole('radio', { name: 'Edición' }).click();
+    await page.locator('.editor-tab').first().waitFor();
+    await page.locator('.properties dl').waitFor();
+    await page.getByRole('tab', { name: 'Explorador' }).click();
+    await page.locator('.tree-file').first().waitFor();
+    await page.locator('.file-link').filter({ hasText: 'metadata.yaml' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.editor-tab').length === 2);
+    await page.getByRole('radio', { name: 'Lectura' }).click();
+    assert.equal(await page.locator('.tree-file').count(), 0);
+    // Filtros desplegables con chips y contador.
     await page.getByLabel('Buscar referencias').fill('');
+    await page.getByRole('button', { name: /^Filtros/ }).click();
     await page.getByLabel('Filtrar por extensión').selectOption('.py');
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 2);
-    await page.getByLabel('Filtrar por extensión').selectOption('.md');
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 2);
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 2);
+    assert.equal(await page.getByRole('button', { name: 'Filtros (1 activos)' }).count() + await page.getByRole('button', { name: /^Filtros \(1/ }).count() > 0, true);
     await page.getByLabel('Filtrar por extensión').selectOption('');
-    await page.getByLabel('Filtrar por categoría').selectOption({ index: 1 });
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length >= 0);
-    await page.getByLabel('Buscar referencias').fill('');
-    await page.getByLabel('Filtrar por categoría').selectOption('');
+    await page.locator('.tag-list').getByRole('option', { name: 'Segment Tree' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 1);
+    assert.ok(await page.locator('.active-filters .chip').count() >= 1);
+    await page.locator('.tag-list').getByRole('option', { name: 'Segment Tree' }).click();
+    await page.keyboard.press('Escape');
+    // Visualización de Segment Tree: reproductor paso a paso.
+    await page.getByLabel('Buscar referencias').fill('segment');
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 1);
+    await page.locator('.sidebar .reference').click();
+    await page.locator('.markdown .katex').first().waitFor();
+    await page.getByRole('tab', { name: /^Visualización/ }).click();
+    await page.locator('.viz-stage svg').waitFor({ timeout: 15000 });
+    const before = await page.locator('.step-counter').textContent();
+    await page.getByRole('button', { name: 'Paso siguiente' }).click();
+    assert.notEqual(await page.locator('.step-counter').textContent(), before);
+    // Menú Ver: tema claro.
+    const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+    await page.getByRole('menuitem', { name: 'Ver', exact: true }).click();
+    await page.getByRole('menuitemcheckbox', { name: /Tema claro/ }).click();
+    assert.notEqual(await page.evaluate(() => document.documentElement.dataset.theme), theme);
+    // Imprimir la referencia actual abre el generador con esa referencia seleccionada.
+    await page.getByRole('menuitem', { name: 'Imprimir', exact: true }).click();
+    await page.getByRole('menuitem', { name: /Imprimir referencia actual/ }).click();
+    await page.locator('.document-workspace').waitFor({ timeout: 15000 });
     // Recarga conserva la biblioteca de ejemplos registrada.
     await page.reload();
     await page.getByRole('button', { name: 'Bibliotecas', exact: true }).first().click();
@@ -113,28 +145,32 @@ try {
     await page.getByRole('button', { name: 'Cargar ramas' }).click();
     await page.waitForFunction(() => document.querySelector('.github-form select')?.options.length > 1);
     await page.getByRole('button', { name: 'Conectar y abrir' }).click();
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 2, null, { timeout: 30000 });
-    await page.locator('.reference').filter({ hasText: 'Ordenación' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 2, null, { timeout: 30000 });
+    await page.locator('.home .reference').filter({ hasText: 'Ordenación' }).click();
     await page.locator('.code code').waitFor();
     assert.match(await page.locator('.code').textContent(), /ordenar/);
     // Solo lectura: no hay acciones de escritura.
     assert.equal(await page.getByRole('button', { name: 'Nueva referencia', exact: true }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: 'Editar', exact: true }).count(), 0);
-    assert.ok(await page.getByRole('button', { name: 'Abrir en GitHub' }).count() >= 0);
+    await page.getByRole('radio', { name: 'Edición' }).click();
+    await page.locator('.editor-tab').first().waitFor();
+    assert.equal(await page.getByLabel('Contenido del archivo').count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Guardar cambios' }).count(), 0);
+    await page.getByRole('radio', { name: 'Lectura' }).click();
     // Filtros con contenido indexado.
     await page.getByLabel('Buscar referencias').fill('ordenar');
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 1);
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 1);
     await page.getByLabel('Buscar referencias').fill('');
-    await page.getByLabel('Filtrar por etiqueta').fill('sort');
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 1);
-    await page.getByLabel('Filtrar por etiqueta').fill('');
+    await page.getByRole('button', { name: /^Filtros/ }).click();
+    await page.locator('.tag-list').getByRole('option', { name: 'sort' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 1);
+    await page.locator('.tag-list').getByRole('option', { name: 'sort' }).click();
     // Persistencia: al recargar, la biblioteca está registrada y el árbol sale de la caché.
     await page.reload();
     await page.getByRole('button', { name: 'Bibliotecas', exact: true }).first().click();
     await page.locator('.library-item').first().waitFor();
     treeCalls.length = 0;
     await page.getByRole('button', { name: 'Abrir', exact: true }).first().click();
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 2, null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 2, null, { timeout: 30000 });
     assert.equal(treeCalls.length, 0, 'el árbol cacheado evita una nueva descarga');
     await context.close();
     console.log('e2e (b) GitHub simulado: correcto');
@@ -183,11 +219,14 @@ try {
     });
     await page.getByRole('button', { name: 'Conectar una biblioteca' }).click();
     await page.getByRole('button', { name: 'Seleccionar carpeta local' }).click();
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 1, null, { timeout: 30000 });
-    await page.locator('.reference').click();
-    await page.locator('.code code').waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 1, null, { timeout: 30000 });
+    await page.locator('.home .reference').click();
+    await page.locator('.reading .markdown').first().waitFor();
+    await page.getByRole('radio', { name: 'Edición' }).click();
+    await page.getByLabel('Contenido del archivo').waitFor();
     // Edición de metadatos: YAML inválido rechazado, válido guardado.
     await page.getByRole('button', { name: 'Editar metadatos' }).click();
+    await page.locator('.editor-tab.active').filter({ hasText: 'metadata.yaml' }).waitFor();
     await page.getByLabel('Contenido del archivo').fill('title: [');
     await page.getByRole('button', { name: 'Guardar cambios' }).click();
     await page.waitForFunction(() => /Corrige|inválido|YAML/i.test(document.querySelector('.status')?.textContent || ''));
@@ -195,8 +234,8 @@ try {
     await page.getByRole('button', { name: 'Guardar cambios' }).click();
     await page.waitForFunction(() => /guardado/i.test(document.querySelector('.status')?.textContent || ''));
     // Detección de conflicto: leer notas, modificarlas externamente por OPFS y guardar.
-    await page.getByLabel('Archivo de la referencia').selectOption('algoritmo/notes.md');
-    await page.locator('.code code, article.markdown').first().waitFor();
+    await page.locator('.file-link').filter({ hasText: 'notes.md' }).click();
+    await page.waitForFunction(() => document.querySelector('textarea')?.value.includes('Notas locales'));
     const notes = await page.evaluate(async () => {
       const root = await navigator.storage.getDirectory();
       const dir = await root.getDirectoryHandle('coleccion');
@@ -210,18 +249,27 @@ try {
       const digest = await crypto.subtle.digest('SHA-256', bytes);
       return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
     });
-    await page.getByRole('button', { name: 'Editar', exact: true }).click();
     await page.getByLabel('Contenido del archivo').fill('# Borrador local');
     await page.getByRole('button', { name: 'Guardar cambios' }).click();
     await page.waitForFunction(() => /cambió externamente/i.test(document.querySelector('.status')?.textContent || ''));
     // Crear referencia nueva (aceptar el diálogo de descartar el borrador conflictuado).
-    page.once('dialog', d => d.accept());
-    await page.getByRole('button', { name: 'Nueva referencia' }).click();
+    page.on('dialog', d => d.accept());
+    await page.getByRole('menuitem', { name: 'Archivo', exact: true }).click();
+    await page.getByRole('menuitem', { name: /Nueva referencia/ }).click();
     await page.getByLabel('Ruta relativa a la biblioteca').fill('nueva-ref');
     await page.getByRole('button', { name: 'Confirmar' }).click();
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 2);
+    await page.waitForFunction(() => /(^|\D)2 referencias/.test(document.querySelector('.statusbar')?.textContent || ''));
+    // Crear un archivo de documentación y eliminarlo desde el menú contextual del árbol.
+    await page.getByRole('menuitem', { name: 'Archivo', exact: true }).click();
+    await page.getByRole('menuitem', { name: /Nuevo archivo/ }).click();
+    await page.getByLabel('Ruta relativa a la biblioteca').fill('nueva-ref/explicacion.md');
+    await page.getByRole('button', { name: 'Confirmar' }).click();
+    await page.locator('.editor-tab').filter({ hasText: 'explicacion.md' }).waitFor();
+    await page.locator('.tree-row').filter({ hasText: 'nueva-ref' }).first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /Eliminar/ }).click();
+    await page.waitForFunction(() => /(^|\D)1 referencias/.test(document.querySelector('.statusbar')?.textContent || ''));
     // Actualizar detecta el cambio externo; el código no se modificó.
-    await page.getByRole('button', { name: 'Actualizar', exact: true }).click();
+    await page.locator('.sidebar-head').getByRole('button', { name: 'Actualizar', exact: true }).click();
     await page.waitForFunction(() => /actualizada/i.test(document.querySelector('.status')?.textContent || ''), null, { timeout: 30000 });
     const after = await page.evaluate(async () => {
       const root = await navigator.storage.getDirectory();
@@ -252,10 +300,12 @@ try {
     await page.getByRole('button', { name: 'Conectar una biblioteca' }).click();
     const input = page.locator('input[type=file]');
     await input.setInputFiles(snapshotDir);
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 1, null, { timeout: 30000 });
-    await page.locator('.reference').click();
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 1, null, { timeout: 30000 });
+    await page.locator('.home .reference').click();
     await page.locator('.code code').waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Editar', exact: true }).count(), 0, 'instantánea es de solo lectura');
+    await page.getByRole('radio', { name: 'Edición' }).click();
+    await page.locator('.editor-tab').first().waitFor();
+    assert.equal(await page.getByLabel('Contenido del archivo').count(), 0, 'instantánea es de solo lectura');
     assert.equal(await page.getByRole('button', { name: 'Nueva referencia' }).count(), 0);
     await context.close();
     console.log('e2e (d) instantánea: correcto');
@@ -267,7 +317,7 @@ try {
     const page = await newPage(context);
     await page.goto(url);
     await page.getByRole('button', { name: 'Abrir ejemplos', exact: true }).first().click();
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 5, null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 6, null, { timeout: 30000 });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `desbordamiento horizontal: ${overflow}px`);
     await context.close();

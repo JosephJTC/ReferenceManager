@@ -1,6 +1,11 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import katex from 'katex';
+import { buildReadingModel, readingVisualizations } from '../../shared/reading.js';
+import { parseSegmentValues, segmentTreeSvg, type SegmentOperation } from '../../shared/visualizations/segment-tree.js';
 import hljs from 'highlight.js/lib/common';
 import { z } from 'zod';
 import { canonicalPath, documentSettingsSchema, metadataLabels, type DocumentRequest, type DocumentSettings } from '../../shared/document.js';
@@ -41,9 +46,15 @@ export function highlightedLines(source: string, filename: string, highlighting:
 function markdownHtml(content: string) {
   return renderToStaticMarkup(createElement(Markdown, {
     skipHtml: true,
+    remarkPlugins: [remarkGfm, remarkMath],
     components: {
       a: ({ children }: { children?: React.ReactNode }) => createElement('span', null, children),
-      img: ({ alt }: { alt?: string }) => createElement('span', null, `[Imagen: ${alt || 'sin descripción'}]`)
+      img: ({ alt }: { alt?: string }) => createElement('span', null, `[Imagen: ${alt || 'sin descripción'}]`),
+      code: ({ className, children }: { className?: string; children?: React.ReactNode }) => {
+        const display = /math-display/.test(className || '');
+        if (!display && !/math-inline/.test(className || '')) return createElement('code', { className }, children);
+        return createElement('span', { className: display ? 'math-display' : 'math-inline', dangerouslySetInnerHTML: { __html: katex.renderToString(String(children ?? ''), { displayMode: display, output: 'mathml', throwOnError: false, strict: 'ignore' }) } });
+      }
     }, children: content
   }));
 }
@@ -94,7 +105,10 @@ export async function buildDocumentModel(service: DocumentSource, input: Documen
         if (value !== undefined && value !== null && value !== '') blocks.push({ html: `<div class="metadata"><strong>${escapeHtml(metadataLabels[key] || key)}</strong><div>${escapeHtml(readable(value))}</div></div>` });
       }
       if (settings.notes) {
-        const notes = reference.files.filter(file => /\.(md|txt)$/i.test(file));
+        const reading = buildReadingModel(reference);
+        const order = reading.tabs.flatMap(tab => tab.id === 'code' ? [] : tab.sections.map(section => section.file));
+        const labels = new Map(reading.tabs.flatMap(tab => tab.sections.map(section => [section.file, section.label] as const)));
+        const notes = reference.files.filter(file => /\.(md|txt)$/i.test(file)).sort((a, b) => (order.indexOf(a) + 1 || 1e6) - (order.indexOf(b) + 1 || 1e6));
         if (reference.metadata.notes) {
           const declared = joinRelative(reference.path, reference.metadata.notes);
           if (notes.includes(declared)) notes.splice(notes.indexOf(declared), 1), notes.unshift(declared);
@@ -103,7 +117,7 @@ export async function buildDocumentModel(service: DocumentSource, input: Documen
         for (const file of notes) {
           let content: string;
           try { content = await snapshot(file); } catch (error) { throw new Error(`No se pudieron incluir las notas ${file}: ${(error as Error).message}`); }
-          blocks.push({ html: `<div class="file-title">Notas · ${escapeHtml(baseName(file))}</div>`, keepNext: true });
+          blocks.push({ html: `<div class="file-title">${escapeHtml(labels.get(file) || 'Notas')} · ${escapeHtml(baseName(file))}</div>`, keepNext: true });
           blocks.push({ html: `<article class="notes">${/\.md$/i.test(file) ? markdownHtml(content) : `<p>${escapeHtml(content)}</p>`}</article>` });
         }
       }
@@ -117,6 +131,13 @@ export async function buildDocumentModel(service: DocumentSource, input: Documen
         }
       }
       if (!reference.code.length && settings.code) blocks.push({ html: '<p class="missing">Esta referencia no contiene archivos de código.</p>' });
+      if (settings.visualizations !== false) for (const spec of readingVisualizations(reference)) {
+        if (spec.type !== 'segment-tree') continue;
+        let values = [5, 8, 6, 3, 2, 7, 2, 6];
+        try { if (spec.values?.length) values = parseSegmentValues(spec.values.join(',')); } catch { warnings.push(`${reference.path}: valores de visualización no válidos; se usan valores de ejemplo.`); }
+        const operation = (['sum', 'min', 'max'].includes(spec.operation || '') ? spec.operation : 'sum') as SegmentOperation;
+        blocks.push({ html: `<figure class="visualization">${segmentTreeSvg(values, operation)}<figcaption>${escapeHtml(spec.title || 'Segment Tree')} · arreglo [${values.join(', ')}]</figcaption></figure>` });
+      }
     }
     const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
     for (const [index, child] of children.entries()) await visit(child, `${number}.${index + 1}`, depth + 1);
