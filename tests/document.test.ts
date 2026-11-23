@@ -72,3 +72,17 @@ test('limita la cantidad de bloques antes de componer un documento desmesurado',
     await assert.rejects(buildDocumentModel(service, { selected: [folder], settings: { ...defaultDocumentSettings, notes: false, highlighting: false } }), /demasiadas líneas/);
   });
 });
+test('incluye visualizaciones SVG, orientación horizontal, fuente de código y fórmulas', async () => {
+  const service = new LibraryIndexer(new NodeFsProvider(path.resolve('examples/coleccion')));
+  const settings = { ...defaultDocumentSettings, orientation: 'landscape' as const, codeFont: 'courier' as const };
+  const model = await buildDocumentModel(service, { selected: ['algoritmos/segment-tree'], settings });
+  const html = model.blocks.map(block => block.html).join('');
+  assert.match(html, /<figure class="visualization"><svg/);
+  assert.match(html, /<math/);
+  assert.match(html, /Introducción · 01-introduccion\.md/);
+  const document = documentHtml(model);
+  assert.match(document, /@page\{size:297mm 210mm/);
+  assert.match(document, /'Courier New',Courier,monospace/);
+  const without = await buildDocumentModel(service, { selected: ['algoritmos/segment-tree'], settings: { ...settings, visualizations: false } });
+  assert.doesNotMatch(without.blocks.map(block => block.html).join(''), /visualization/);
+});

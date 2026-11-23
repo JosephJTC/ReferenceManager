@@ -16,6 +16,7 @@ export interface LibraryProvider {
   write?(path: string, bytes: Uint8Array, options: { create: boolean }): Promise<void>;
   mkdir?(path: string): Promise<void>;
   rename?(from: string, to: string): Promise<void>;
+  remove?(path: string): Promise<void>;
   externalUrl?(path: string): string | undefined;
 }
 

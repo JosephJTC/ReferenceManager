@@ -49,7 +49,7 @@ const relative = z.string().max(4096);
 const searchSchema = z.object({
   query: z.string().max(1000), filter: z.enum(['all', 'no-code', 'no-metadata', 'warnings']), scope: relative,
   sort: z.enum(['title', 'modified']), language: z.string().max(200).optional(), tag: z.string().max(500).optional(),
-  extension: z.string().max(50).optional(), category: z.string().max(200).optional(),
+  extension: z.string().max(50).optional(), category: z.string().max(200).optional(), platform: z.string().max(200).optional(),
   offset: z.number().int().min(0).max(100000).optional(), limit: z.number().int().min(1).max(100).optional()
 });
 
@@ -86,7 +86,9 @@ async function execute(operation: string, args: unknown[]) {
     case 'scan': return strip(await active().scan());
     case 'read': return active().read(relative.parse(args[0]));
     case 'save': return active().save(relative.parse(args[0]), text.parse(args[1]), z.string().regex(/^[a-f0-9]{64}$/).parse(args[2]));
-    case 'create': return strip(await active().create(relative.parse(args[0]), z.enum(['folder', 'reference']).parse(args[1])));
+    case 'create': return strip(await active().create(relative.parse(args[0]), z.enum(['folder', 'reference', 'file']).parse(args[1])));
+    case 'remove': return strip(await active().remove(relative.parse(args[0])));
+    case 'asset': return active().readAsset(relative.parse(args[0]));
     case 'supplement': return strip(await active().supplement(relative.parse(args[0]), z.enum(['notes', 'metadata']).parse(args[1])));
     case 'rename': return strip(await active().rename(relative.parse(args[0]), relative.parse(args[1])));
     case 'model': return buildDocumentModel(active(), args[0] as Parameters<typeof buildDocumentModel>[1]);
@@ -145,7 +147,7 @@ async function execute(operation: string, args: unknown[]) {
     case 'search': {
       const request = searchSchema.parse(args[0]) as SearchRequest;
       if (!snapshot) snapshot = await active().scan();
-      const result = searchReferences(snapshot.references, request.query, request.filter, request.scope, request.sort, request.language, request.tag, request.extension, request.category);
+      const result = searchReferences(snapshot.references, request.query, request.filter, request.scope, request.sort, request.language, request.tag, request.extension, request.category, request.platform);
       const offset = request.offset || 0, limit = request.limit || 100;
       return { paths: result.slice(offset, offset + limit).map(reference => reference.path), total: result.length, offset, limit };
     }

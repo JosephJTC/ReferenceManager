@@ -81,7 +81,7 @@ test('busca por código, notas, título, etiquetas y acentos; filtra por carpeta
     assert.equal(referenceCategory(refs.find(ref => ref.path === 'b')!), 'b');
   });
 });
-test('crea, renombra y guarda notas con detección de conflictos y sin editar código', async () => {
+test('crea, renombra y guarda notas y código con detección de conflictos', async () => {
   await fixture({ 'parent/.keep': '', 'code.cpp': 'int x;' }, async service => {
     await service.create('parent/nueva', 'reference');
     assert.equal((await service.scan()).references.length, 2);
@@ -91,8 +91,10 @@ test('crea, renombra y guarda notas con detección de conflictos y sin editar c�
     await service.save(name, '# Modificado', original.version);
     await assert.rejects(service.save(name, '# Conflicto', original.version), /cambió externamente/);
     const code = await service.read('code.cpp');
-    await assert.rejects(service.save('code.cpp', '', code.version), /Solo se permite/);
-    assert.equal((await service.read('code.cpp')).content, 'int x;');
+    await service.save('code.cpp', 'int y;', code.version);
+    assert.equal((await service.read('code.cpp')).content, 'int y;');
+    await assert.rejects(service.save('code.cpp', 'int z;', code.version), /cambió|conflict|versión/i);
+    await assert.rejects(service.save('imagen.png', 'x', code.version), /Solo se pueden editar/);
     await assert.rejects(service.rename('parent/renombrada', 'parent'), /ya existe/);
     await assert.rejects(service.rename('', 'root'), /raíz/);
     await assert.rejects(service.rename('.', 'root'), /raíz/);
@@ -131,8 +133,26 @@ test('no atraviesa junctions o enlaces fuera de la colección', async () => {
 });
 test('la colección real de ejemplos incluye categorías, varios lenguajes y estados incompletos', async () => {
   const result = await new LibraryIndexer(new NodeFsProvider(path.resolve('examples/coleccion'))).scan();
-  assert.equal(result.references.length, 5);
+  assert.equal(result.references.length, 6);
   assert.equal(result.references.find(ref => ref.title === 'DSU')?.code.length, 2);
+  const segment = result.references.find(ref => ref.path === 'algoritmos/segment-tree');
+  assert.ok(segment?.files.includes('algoritmos/segment-tree/docs/02-intuicion.md'));
+  assert.ok(!result.references.some(ref => ref.path.endsWith('/docs')));
   assert.ok(result.references.some(ref => !ref.code.length));
   assert.ok(result.references.some(ref => !ref.hasMetadata));
+});
+test('crea archivos de texto, elimina elementos y adjunta carpetas de recursos a la referencia', async () => {
+  await fixture({ 'st/code.cpp': 'int st;', 'st/docs/intuicion.md': '# Idea', 'st/variantes/lazy.cpp': 'int lazy;', 'otro/docs/a.md': '# Suelto' }, async service => {
+    let result = await service.scan();
+    const st = result.references.find(ref => ref.path === 'st')!;
+    assert.deepEqual(st.code, ['st/code.cpp', 'st/variantes/lazy.cpp']);
+    assert.ok(st.files.includes('st/docs/intuicion.md'));
+    assert.ok(result.references.some(ref => ref.path === 'otro/docs'));
+    result = await service.create('st/ejemplos.md', 'file');
+    assert.ok(result.references.find(ref => ref.path === 'st')!.files.includes('st/ejemplos.md'));
+    await assert.rejects(service.create('st/binario.exe', 'file'), /extensión/);
+    result = await service.remove('st/variantes');
+    assert.deepEqual(result.references.find(ref => ref.path === 'st')!.code, ['st/code.cpp']);
+    await assert.rejects(service.remove(''), /raíz/);
+  });
 });

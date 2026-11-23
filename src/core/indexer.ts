@@ -1,7 +1,7 @@
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 import type { Collection, Metadata, Reference, TextFile } from '../shared/types.js';
-import { codeExtensions, textExtensions, extensionOf, isMetadataFile, isIgnoredName, isRepositoryDocument, collator } from '../shared/formats.js';
+import { codeExtensions, textExtensions, extensionOf, isMetadataFile, isIgnoredName, isRepositoryDocument, isReferenceResourceFolder, isEditableFile, assetExtensions, collator } from '../shared/formats.js';
 import {
   ignoredDirectories, textLimit, metadataLimit, indexLimit, entryLimit,
   normalizeRelative, joinRelative, parentOf, baseName, sha256Hex,
@@ -108,14 +108,38 @@ export class LibraryIndexer {
     const nextCache = new Map<string, { signature: string; reference: Reference }>();
     let indexedBytes = 0, metadataBytes = 0, cacheHits = 0;
     const dirPaths = [...directories.keys()].sort((a, b) => collator.compare(a, b));
+    const directFiles = (directory: string) => directories.get(directory)!.filter(entry => !entry.directory).map(entry => entry.path);
+    const qualifies = new Map<string, boolean>();
     for (const directory of dirPaths) {
+      const files = directFiles(directory);
+      qualifies.set(directory, files.some(file => isMetadataFile(file) || codeExtensions.has(extensionOf(file)) || (['.md', '.txt'].includes(extensionOf(file)) && !isRepositoryDocument(file))));
+    }
+    const attached = new Map<string, string[]>();
+    const ownerOf = (directory: string) => {
+      const parts = directory ? directory.split('/') : [];
+      for (let index = 0; index < parts.length; index++) {
+        const parent = parts.slice(0, index).join('/');
+        if (isReferenceResourceFolder(parts[index]) && qualifies.get(parent)) return parent;
+      }
+      return undefined;
+    };
+    const owned = new Set<string>();
+    for (const directory of dirPaths) {
+      const owner = ownerOf(directory);
+      if (owner === undefined) continue;
+      owned.add(directory);
+      if (!attached.has(owner)) attached.set(owner, []);
+      attached.get(owner)!.push(...directFiles(directory));
+    }
+    for (const directory of dirPaths) {
+      if (owned.has(directory)) continue;
       const children = directories.get(directory)!.sort((a, b) => collator.compare(a.path, b.path));
-      const files = children.filter(entry => !entry.directory).map(entry => entry.path);
-      const metadataFiles = files.filter(isMetadataFile).sort((a, b) => Number(extensionOf(a) !== '.yaml') - Number(extensionOf(b) !== '.yaml'));
+      const files = [...children.filter(entry => !entry.directory).map(entry => entry.path), ...(attached.get(directory) || []).sort((a, b) => collator.compare(a, b))];
+      const metadataFiles = files.filter(file => parentOf(file) === directory && isMetadataFile(file)).sort((a, b) => Number(extensionOf(a) !== '.yaml') - Number(extensionOf(b) !== '.yaml'));
       const metadataFile = metadataFiles[0];
       const code = files.filter(file => codeExtensions.has(extensionOf(file)));
       const notes = files.filter(file => ['.md', '.txt'].includes(extensionOf(file)));
-      if (!metadataFile && !code.length && notes.every(isRepositoryDocument)) continue;
+      if (!qualifies.get(directory)) continue;
       const warnings: string[] = [];
       const sizes = new Map<string, ProviderEntry>(files.map(file => [file, this.entry(file)!]));
       const available = Math.max(0, Math.min(1000000, Math.floor((indexLimit - indexedBytes) / 2)));
@@ -146,7 +170,7 @@ export class LibraryIndexer {
           if (parentOf(candidate) !== directory || !actual || !sizes.has(actual)) warnings.push(`Archivo declarado no disponible directamente en esta carpeta: ${declared}`);
           else selected.push(actual);
         }
-        selected = [...new Set([...selected, ...notes, ...metadataFiles])];
+        selected = [...new Set([...selected, ...notes, ...metadataFiles, ...(attached.get(directory) || [])])];
       }
       if (metadata.notes) {
         const candidate = joinRelative(directory, metadata.notes);
@@ -187,12 +211,41 @@ export class LibraryIndexer {
     if (!this.provider.write || !this.provider.mkdir) throw new Error('Esta biblioteca es de solo lectura.');
   }
 
-  async create(relative: string, kind: 'folder' | 'reference') {
+  async readAsset(relative: string): Promise<{ path: string; mime: string; data: string }> {
+    const normalized = normalizeRelative(relative);
+    const extension = extensionOf(normalized);
+    const mime = assetExtensions[extension];
+    if (!mime) throw new Error('Solo se pueden mostrar imágenes PNG, JPG, GIF, WebP o SVG.');
+    const entry = this.entry(normalized);
+    if (entry?.size !== undefined && entry.size > 1024 * 1024) throw new Error('La imagen supera 1 MiB.');
+    const bytes = await this.provider.read(normalized);
+    if (bytes.length > 1024 * 1024) throw new Error('La imagen supera 1 MiB.');
+    let binary = '';
+    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    return { path: normalized, mime, data: `data:${mime};base64,${btoa(binary)}` };
+  }
+
+  async remove(relative: string) {
+    if (!this.provider.remove) throw new Error('Esta biblioteca no permite eliminar elementos.');
+    await this.listing();
+    const normalized = normalizeRelative(relative);
+    if (!normalized) throw new Error('No se puede eliminar la raíz de la biblioteca.');
+    if (!this.entry(normalized)) throw new Error('El elemento ya no existe.');
+    await this.provider.remove(normalized);
+    return this.scan();
+  }
+
+  async create(relative: string, kind: 'folder' | 'reference' | 'file') {
     this.requireWrite();
     await this.listing();
     if (!relative.trim()) throw new Error('Escribe un nombre.');
     const normalized = normalizeRelative(relative);
     if (this.entry(normalized)) throw new Error('Ya existe un archivo o carpeta con ese nombre.');
+    if (kind === 'file') {
+      if (!isEditableFile(normalized)) throw new Error('Usa una extensión de texto conocida (.md, .cpp, .py, .yaml, .json…).');
+      await this.provider.write!(normalized, new TextEncoder().encode(''), { create: true });
+      return this.scan();
+    }
     await this.provider.mkdir!(normalized);
     if (kind === 'reference') {
       const title = baseName(normalized);
@@ -229,7 +282,7 @@ export class LibraryIndexer {
 
   async save(relative: string, content: string, expected: string) {
     if (!this.provider.write) throw new Error('Esta biblioteca es de solo lectura.');
-    if (!['.md', '.yaml', '.yml'].includes(extensionOf(relative))) throw new Error('Solo se permite editar notas Markdown y metadatos YAML. El código fuente es de solo lectura.');
+    if (!isEditableFile(relative)) throw new Error('Solo se pueden editar archivos de texto (código, notas, metadatos y configuración).');
     if (new TextEncoder().encode(content).length > (this.options.maxFileBytes || textLimit)) throw new Error('El contenido supera 2 MiB.');
     if (isMetadataFile(relative) && parseMetadata(content).warnings.length) throw new Error('Corrige los metadatos antes de guardarlos: ' + parseMetadata(content).warnings.join(' '));
     const normalized = normalizeRelative(relative);

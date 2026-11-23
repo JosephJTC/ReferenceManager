@@ -72,7 +72,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await connectDocs(page);
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 2, null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 2, null, { timeout: 30000 });
     await page.getByRole('button', { name: 'Generar documento', exact: true }).click();
     await page.getByRole('button', { name: 'Generar vista previa' }).click();
     await page.waitForFunction(() => document.querySelector('.document-preview iframe'), null, { timeout: 120000 });
@@ -160,9 +160,9 @@ try {
       const timer = setInterval(() => { const now = performance.now(); marks.push(now - last); last = now; }, 50);
       setTimeout(() => { clearInterval(timer); resolve(Math.max(...marks)); }, 3000);
     }));
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 100, null, { timeout: 180000 });
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 100, null, { timeout: 180000 });
     await page.getByLabel('Buscar referencias').fill('valor_1999');
-    await page.waitForFunction(() => document.querySelectorAll('.reference').length === 1);
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 1);
     console.log(`e2e (f) 2000 referencias: correcto (latido máximo ${Math.round(heartbeat)} ms)`);
     await context.close();
   }

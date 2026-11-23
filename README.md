@@ -29,7 +29,7 @@ manager/
 └── tests/             Pruebas unitarias, e2e en navegador y comprobación en vivo
 ```
 
-- **Interfaz (`src/renderer`)**: React 19 + TypeScript. Conserva el explorador de carpetas, la búsqueda con filtros (texto, lenguaje, extensión, categoría, etiqueta), el visor con resaltado de sintaxis, la vista de metadatos y el espacio «Generar documento». Las acciones de escritura se ocultan cuando la biblioteca activa es de solo lectura.
+- **Interfaz (`src/renderer`)**: React 19 + TypeScript. Interfaz tipo IDE con menús, barra lateral redimensionable, tema claro/oscuro y modos lectura/edición. Conserva el explorador de carpetas, la búsqueda con filtros (texto, lenguaje, extensión, categoría, plataforma, etiqueta), el resaltado de sintaxis, los metadatos y el espacio «Generar documento». Las visualizaciones se registran en `src/renderer/visualizations/registry.ts`. Las acciones de escritura se ocultan cuando la biblioteca activa es de solo lectura.
 - **Bibliotecas (`src/web/libraries.ts`)**: registro en IndexedDB con nombre, tipo, ubicación, rama, estado y fecha de la última indexación. Eliminar una conexión nunca borra archivos: solo el registro y sus cachés.
 - **Proveedores (`src/web/providers`)**: todos implementan el mismo contrato (`list`, `read`, y opcionalmente `write`, `mkdir`, `rename`, `externalUrl`) y declaran sus capacidades (`write`, `rename`, `watch`, `refresh`). El indexador no sabe de dónde vienen los bytes.
 - **Indexación (`src/core/indexer.ts`)**: recorre la lista del proveedor, valida rutas, omite binarios y archivos mayores de 2 MiB sin descargarlos, lee `metadata.yaml`/`.yml`, calcula SHA-256 y cachea por firma de versión. Se ejecuta en un *web worker* (`src/web/library.worker.ts`) para no bloquear la interfaz; la búsqueda y la composición de documentos también corren ahí.
@@ -49,7 +49,7 @@ manager/
 | Detección de conflictos, BOM y CRLF, YAML como texto | Escaneo/búsqueda en web worker en lugar de worker de Electron | Filtros por extensión y categoría |
 | Semántica de indexación, creación, renombrado y complementos | Instantánea de solo lectura donde no hay File System Access | IDs estables, «seleccionar para practicar» e índice TypeSpeed exportable |
 
-Las acciones exclusivas de escritorio desaparecieron (no hay ventana propia, ni menús, ni PDF interno); el resto del flujo es el mismo.
+Las acciones exclusivas de escritorio desaparecieron (no hay ventana propia ni PDF interno); el resto del flujo es el mismo.
 
 ## 4. Desarrollo local
 
@@ -86,7 +86,7 @@ npm run preview    # sirve dist/ localmente
 
 ## 8. Referencias y metadatos
 
-Una referencia es una carpeta; se reconocen archivos de código (`.cpp`, `.cc`, `.c`, `.h`, `.hpp`, `.py`, `.java`, `.js`, `.ts`, `.rs`, `.go`, `.cs`, `.kt`, `.rb`, `.swift`), notas (`.md`, `.txt`) y metadatos (`metadata.yaml` o `metadata.yml`). Se omiten los archivos y carpetas ocultos (`.gitkeep`, `.gitignore`, `.github`, …), y un `README`, `LICENSE`, `CHANGELOG` o `CONTRIBUTING` por sí solo no convierte una carpeta en referencia; dentro de una referencia sí se muestra como notas. En las bibliotecas de solo lectura (GitHub, instantáneas) no se muestran las carpetas que quedan sin archivos; en carpetas locales editables se conservan para poder crear contenido en ellas. Solo se pueden editar `.md`, `.yaml` y `.yml`; el código fuente es de solo lectura.
+Una referencia es una carpeta; se reconocen archivos de código (`.cpp`, `.cc`, `.c`, `.h`, `.hpp`, `.py`, `.java`, `.js`, `.ts`, `.rs`, `.go`, `.cs`, `.kt`, `.rb`, `.swift`), notas (`.md`, `.txt`) y metadatos (`metadata.yaml` o `metadata.yml`). Se omiten los archivos y carpetas ocultos (`.gitkeep`, `.gitignore`, `.github`, …), y un `README`, `LICENSE`, `CHANGELOG` o `CONTRIBUTING` por sí solo no convierte una carpeta en referencia; dentro de una referencia sí se muestra como notas. En las bibliotecas de solo lectura (GitHub, instantáneas) no se muestran las carpetas que quedan sin archivos; en carpetas locales editables se conservan para poder crear contenido en ellas. En carpetas locales se pueden editar todos los archivos de texto (código, notas, metadatos y configuración); GitHub, instantáneas y ejemplos son de solo lectura.
 
 Campos habituales de `metadata.yaml` (todos opcionales salvo que se indique):
 
@@ -103,6 +103,40 @@ url: https://cses.fi/...    # enlace al problema o fuente
 ```
 
 Campos personalizados adicionales se conservan y aparecen en la vista de metadatos y en el índice exportado.
+
+### Formato de documentación
+
+Todo es opcional y retrocompatible: una carpeta con un solo `.cpp` sigue siendo una referencia válida y en modo lectura muestra solo la pestaña **Código**. Para documentar más, añade archivos Markdown con nombres reconocibles (en español o inglés; se admite prefijo numérico como `01-introduccion.md`):
+
+| Pestaña | Nombres reconocidos |
+|---|---|
+| Explicación | `introduccion`, `problema`, `intuicion`, `explicacion`/`notes`/`README`, `funcionamiento`, `invariantes`, `correctitud`, `implementacion`, `limitaciones`, `errores-comunes`, `variantes` |
+| Ejemplos | `ejemplos.md`/`examples.md` y archivos dentro de `ejemplos/` o `examples/` |
+| Complejidad | `complejidad.md`/`complexity.md` y el campo `complexity` de `metadata.yaml` |
+| Visualización | campo `visualizations` o carpeta cuyo nombre coincide con una visualización registrada (`segment-tree`) |
+
+Las subcarpetas `docs/`, `assets/`/`recursos/`, `visualizations/`, `variants/`/`variantes/` y `examples/`/`ejemplos/` dentro de una referencia forman parte de ella (no son referencias nuevas). El Markdown admite tablas, fórmulas KaTeX (`$…$`, `$$…$$`), bloques de código resaltados e imágenes relativas (`![árbol](assets/arbol.png)`, máximo 1 MiB; PNG, JPG, GIF, WebP o SVG). El HTML incrustado se ignora por seguridad.
+
+```yaml
+complexity: { time: "O(log n)", space: "O(n)", notes: "por operación" }
+visualizations:
+  - type: segment-tree
+    title: Suma por intervalos
+    values: [5, 8, 6, 3, 2, 7, 2, 6]   # hasta 16 valores
+    operation: sum                      # sum | min | max
+docs: [docs/01-introduccion.md, docs/02-intuicion.md]   # orden explícito (opcional)
+related: [algoritmos/dsu]
+```
+
+`examples/coleccion/algoritmos/segment-tree` es una referencia completa de ejemplo. Para migrar una referencia existente basta con añadir los archivos que quieras; no hay que mover ni renombrar nada.
+
+### Modos lectura y edición
+
+- **Lectura** (predeterminado): el árbol muestra solo carpetas y referencias; al abrir una, aparecen las pestañas con contenido (Explicación, Código, Visualización, Ejemplos, Complejidad), un índice de secciones y referencias relacionadas. Se ocultan metadatos, configuración y assets.
+- **Edición**: estructura completa, varios archivos en pestañas, panel de propiedades y menú contextual del árbol para crear, mover/renombrar y eliminar (con confirmación). Solo en carpetas locales con permiso de escritura.
+- Cambiar de modo nunca modifica archivos. Atajos: `Ctrl+K` buscar, `Ctrl+Shift+F` filtros, `Ctrl+B` barra lateral, `Alt+M` modo, `Ctrl+S` guardar, `Alt+W` cerrar pestaña, `Alt+N` nueva referencia, `F2` renombrar, `Alt+R` actualizar, `Ctrl+P` imprimir referencia, `Ctrl+Shift+P` generador de documentos, `F1` ayuda.
+
+El generador de documentos admite orientación, fuente del código, portada opcional y visualizaciones estáticas en SVG; las notas se ordenan según las secciones anteriores.
 
 ## 9. Índice TypeSpeed
 

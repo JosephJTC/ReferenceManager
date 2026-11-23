@@ -114,14 +114,16 @@ export function paginateDocument(settings: DocumentSettings, doc: Document = doc
   for (let attempt = 0; attempt < 8; attempt++) {
     frontPages.forEach(sheet => sheet.remove());
     const frontItems: Item[] = [];
-    const title = doc.createElement('h1'); title.textContent = settings.title;
-    frontItems.push({ element: title, keep: true, pageBreak: false });
-    for (const value of [settings.subtitle, settings.author]) if (value) {
-      const paragraph = doc.createElement('p'); paragraph.className = 'subtitle'; paragraph.textContent = value;
-      frontItems.push({ element: paragraph, keep: true, pageBreak: false });
+    if (settings.titlePage !== false) {
+      const title = doc.createElement('h1'); title.textContent = settings.title;
+      frontItems.push({ element: title, keep: true, pageBreak: false });
+      for (const value of [settings.subtitle, settings.author]) if (value) {
+        const paragraph = doc.createElement('p'); paragraph.className = 'subtitle'; paragraph.textContent = value;
+        frontItems.push({ element: paragraph, keep: true, pageBreak: false });
+      }
+      const introduction = doc.createElement('p'); introduction.className = 'introduction'; introduction.textContent = 'Colección personal de algoritmos, soluciones y apuntes';
+      frontItems.push({ element: introduction, keep: false, pageBreak: false });
     }
-    const introduction = doc.createElement('p'); introduction.className = 'introduction'; introduction.textContent = 'Colección personal de algoritmos, soluciones y apuntes';
-    frontItems.push({ element: introduction, keep: false, pageBreak: false });
     if (settings.toc) {
       const title = doc.createElement('h2'); title.textContent = 'Índice';
       frontItems.push({ element: title, keep: true, pageBreak: false });
