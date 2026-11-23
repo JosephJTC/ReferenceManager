@@ -145,6 +145,8 @@ export function createApi(base: string): Api {
     save: (path, content, version) => ok(() => client.request<TextFile>('save', path, content, version)),
     create: (path, kind) => ok(() => client.request<Collection>('create', path, kind)),
     rename: (path, destination) => ok(() => client.request<Collection>('rename', path, destination)),
+    remove: path => ok(() => client.request<Collection>('remove', path)),
+    readAsset: path => ok(() => client.request<{ path: string; mime: string; data: string }>('asset', path)),
     reveal: (path: string) => ok(async () => { await navigator.clipboard.writeText(path); }),
     external: (path: string) => ok(async () => {
       const url = await client.request<string | undefined>('externalUrl', path);

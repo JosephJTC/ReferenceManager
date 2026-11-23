@@ -6,9 +6,15 @@ export function referenceCategory(reference: Reference): string {
   if (typeof declared === 'string' && declared.trim()) return declared;
   return reference.path.replaceAll('\\', '/').split('/')[0] || '';
 }
+export function referencePlatform(reference: Reference): string {
+  const metadata = reference.metadata as Record<string, unknown>;
+  const custom = (metadata.custom && typeof metadata.custom === 'object' ? metadata.custom : {}) as Record<string, unknown>;
+  for (const value of [metadata.platform, custom.plataforma, custom.platform, metadata.judge]) if (typeof value === 'string' && value.trim()) return value.trim();
+  return '';
+}
 export function searchReferences(
   references: Reference[], query: string, filter: string, scope: string, sort: string,
-  language = '', tag = '', extension = '', category = ''
+  language = '', tag = '', extension = '', category = '', platform = ''
 ) {
   const terms = normalizeQuery(query).split(/\s+/).filter(Boolean);
   const prefix = scope.replaceAll('\\', '/');
@@ -21,6 +27,7 @@ export function searchReferences(
     if (tag && !ref.metadata.tags?.some(value => normalizeQuery(value) === normalizeQuery(tag))) return false;
     if (wantedExtension && !ref.files.some(file => extensionOf(file) === wantedExtension)) return false;
     if (category && normalizeQuery(referenceCategory(ref)) !== normalizeQuery(category)) return false;
+    if (platform && normalizeQuery(referencePlatform(ref)) !== normalizeQuery(platform)) return false;
     const fallback = normalizeQuery(`${ref.title} ${ref.path} ${ref.files.join(' ')} ${ref.metadata.tags?.join(' ') || ''}`);
     return terms.every(term => ref.searchText.includes(term) || fallback.includes(term));
   });

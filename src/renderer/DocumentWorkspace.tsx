@@ -3,7 +3,7 @@ import type { Collection } from '../shared/types.js';
 import { compactDocumentSettings, defaultDocumentSettings, documentSettingsSchema, canonicalPath, metadataLabels, type DocumentSettings, type DocumentPreview } from '../shared/document.js';
 import { normalizeQuery } from '../shared/search.js';
 
-type Props = { collection: Collection; busy: boolean; onBusy: (value: boolean) => void };
+type Props = { collection: Collection; busy: boolean; onBusy: (value: boolean) => void; initialSelection?: string[] };
 function initialSettings() {
   try {
     const saved = documentSettingsSchema.safeParse(JSON.parse(localStorage.getItem('document-settings') || 'null'));
@@ -32,8 +32,8 @@ function HtmlPreview({ html, page, section }: { html: string; page: number; sect
   </div>;
 }
 
-export function DocumentWorkspace({ collection, busy, onBusy }: Props) {
-  const [selected, setSelected] = useState(new Set(collection.references.length <= 500 ? collection.references.map(reference => reference.path) : []));
+export function DocumentWorkspace({ collection, busy, onBusy, initialSelection }: Props) {
+  const [selected, setSelected] = useState(new Set(initialSelection || (collection.references.length <= 500 ? collection.references.map(reference => reference.path) : [])));
   const [selectionQuery, setSelectionQuery] = useState('');
   const [referencePage, setReferencePage] = useState(0);
   const [folderPage, setFolderPage] = useState(0);

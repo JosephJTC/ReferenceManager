@@ -104,6 +104,13 @@ export class LocalFsProvider implements LibraryProvider {
     await directory.getDirectoryHandle(name, { create: true });
   }
 
+  async remove(relative: string): Promise<void> {
+    const parts = this.parts(relative);
+    const name = parts.pop()!;
+    const directory = await this.directory(parts);
+    await directory.removeEntry(name, { recursive: true });
+  }
+
   async rename(from: string, to: string): Promise<void> {
     const movable = this.root as DirectoryHandle;
     if (!this.capabilities.rename) throw new Error('Tu navegador no permite mover ni renombrar dentro de la carpeta. Actualiza el nombre desde tu explorador de archivos.');

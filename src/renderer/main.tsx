@@ -1,53 +1,92 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import Markdown from 'react-markdown';
-import hljs from 'highlight.js/lib/common';
 import 'highlight.js/styles/github-dark.css';
 import './style.css';
-import type { Collection, Reference, Result, TextFile, LibraryCapabilities, LibraryKind } from '../shared/types.js';
+import type { Collection, Entry, Reference, Result, TextFile, LibraryCapabilities, LibraryKind } from '../shared/types.js';
 import { metadataLabels } from '../shared/metadata-labels.js';
-import { collator, extensionOf, isMetadataFile, referenceLanguages } from '../shared/formats.js';
+import { collator, codeExtensions, extensionOf, isEditableFile, isMetadataFile, referenceLanguages } from '../shared/formats.js';
+import { referenceCategory, referencePlatform } from '../shared/search.js';
 import { stableIdPattern } from '../core/library-index.js';
 import { createApi } from '../web/api.js';
 import { FolderTree } from './FolderTree.js';
 import { useReferenceSearch } from './useReferenceSearch.js';
 import { LibrariesPanel } from './LibrariesPanel.js';
+import { FilterBar, emptyFilters, activeFilterCount, type Filters } from './FilterBar.js';
+import { MenuBar, ContextMenu, type Menu, type ContextItem } from './MenuBar.js';
+import { ReadingView } from './ReadingView.js';
+import { MarkdownView } from './MarkdownView.js';
+import { CodeView } from './CodeView.js';
+import { FileBadge, Icon } from './icons.js';
 const DocumentWorkspace = lazy(() => import('./DocumentWorkspace.js').then(module => ({ default: module.DocumentWorkspace })));
 
 window.api = createApi(import.meta.env.BASE_URL || './');
 
+type Mode = 'reading' | 'editing';
+type OpenFile = TextFile & { draft: string; preview?: boolean };
+type Operation = 'folder' | 'reference' | 'file' | 'rename';
 const defaultCapabilities: LibraryCapabilities & { kind: LibraryKind; activeId?: string; dirty?: boolean } = { write: false, rename: false, watch: false, refresh: false, kind: 'example' };
+const stored = <T,>(key: string, fallback: T): T => { try { const value = localStorage.getItem(key); return value === null ? fallback : JSON.parse(value) as T; } catch { return fallback; } };
+const persist = (key: string, value: unknown) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+const kindLabel = (kind: LibraryKind) => kind === 'github' ? 'GitHub · solo lectura' : kind === 'local-fs' ? 'Carpeta local' : kind === 'local-snapshot' ? 'Instantánea · solo lectura' : 'Ejemplos';
+const operationTitles: Record<Operation, string> = { folder: 'Nueva carpeta', reference: 'Nueva referencia', file: 'Nuevo archivo', rename: 'Mover o renombrar' };
+
+function useResizable(key: string, initial: number, min: number, max: number, side: 'left' | 'right') {
+  const [width, setWidth] = useState(() => Math.min(max, Math.max(min, stored(key, initial))));
+  const start = (event: React.PointerEvent) => {
+    event.preventDefault();
+    const origin = event.clientX, base = width;
+    const move = (moveEvent: PointerEvent) => setWidth(Math.min(max, Math.max(min, base + (side === 'left' ? 1 : -1) * (moveEvent.clientX - origin))));
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.classList.remove('resizing'); };
+    document.body.classList.add('resizing');
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  useEffect(() => persist(key, width), [key, width]);
+  const keyboard = (event: React.KeyboardEvent) => { const delta = event.key === 'ArrowLeft' ? -16 : event.key === 'ArrowRight' ? 16 : 0; if (delta) { event.preventDefault(); setWidth(value => Math.min(max, Math.max(min, value + (side === 'left' ? delta : -delta)))); } };
+  return { width, start, keyboard };
+}
 
 function App() {
   const [collection, setCollection] = useState<Collection>();
   const [caps, setCaps] = useState(defaultCapabilities);
   const [workspace, setWorkspace] = useState<'libraries' | 'library' | 'document'>('library');
   const [documentOpened, setDocumentOpened] = useState(false);
+  const [printSelection, setPrintSelection] = useState<{ paths: string[]; n: number }>();
+  const [mode, setModeState] = useState<Mode>(() => stored<Mode>('mode', 'reading') === 'editing' ? 'editing' : 'reading');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => stored('theme', window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+  const [sidebarOpen, setSidebarOpen] = useState(() => stored('sidebar-open', true));
+  const [infoOpen, setInfoOpen] = useState(() => stored('info-open', true));
+  const [sideView, setSideView] = useState<'tree' | 'results'>('tree');
   const [reference, setReference] = useState<Reference>();
-  const [file, setFile] = useState<TextFile>();
-  const [draft, setDraft] = useState('');
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const [activePath, setActivePath] = useState<string>();
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [sort, setSort] = useState('title');
-  const [language, setLanguage] = useState('');
-  const [tag, setTag] = useState('');
-  const [extension, setExtension] = useState('');
-  const [category, setCategory] = useState('');
+  const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [resultPage, setResultPage] = useState(0);
-  const [tab, setTab] = useState('file');
-  const [edit, setEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('Conecta una biblioteca o explora los ejemplos para comenzar.');
-  const [operation, setOperation] = useState<'folder' | 'reference' | 'rename'>();
+  const [operation, setOperation] = useState<Operation>();
   const [operationSource, setOperationSource] = useState('');
   const [destination, setDestination] = useState('');
   const [practiced, setPracticed] = useState(new Set<string>());
-  const [explorerOpen, setExplorerOpen] = useState(true);
+  const [context, setContext] = useState<{ x: number; y: number; items: ContextItem[] }>();
+  const [collapseSignal, setCollapseSignal] = useState({ all: false, n: 0 });
+  const [filterSignal, setFilterSignal] = useState(0);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const sidebar = useResizable('sidebar-width', 280, 200, 520, 'left');
+  const info = useResizable('info-width', 260, 200, 440, 'right');
   const modal = useRef<HTMLDialogElement>(null);
+  const shortcutsModal = useRef<HTMLDialogElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const sequence = useRef(0);
-  const dirty = !!file && draft !== file.content;
+  const file = openFiles.find(item => item.path === activePath);
+  const dirtyFiles = openFiles.filter(item => item.draft !== item.content);
+  const dirty = dirtyFiles.length > 0;
+  const editing = mode === 'editing';
   const canLeave = () => !dirty || window.confirm('Hay cambios sin guardar. ¿Quieres descartarlos?');
+  useEffect(() => { document.documentElement.dataset.theme = theme; persist('theme', theme); }, [theme]);
+  useEffect(() => persist('sidebar-open', sidebarOpen), [sidebarOpen]);
+  useEffect(() => persist('info-open', infoOpen), [infoOpen]);
   useEffect(() => {
     const preventClose = (event: BeforeUnloadEvent) => {
       if (busy || dirty && !window.confirm('Hay cambios sin guardar. ¿Quieres cerrar y descartarlos?')) {
@@ -58,48 +97,52 @@ function App() {
     window.addEventListener('beforeunload', preventClose);
     return () => window.removeEventListener('beforeunload', preventClose);
   }, [dirty, busy]);
-  useEffect(() => {
-    if (operation && !modal.current?.open) modal.current?.showModal();
-    if (!operation) modal.current?.close();
-  }, [operation]);
-  const request = useMemo(() => ({ query, filter, scope, sort, language, tag, extension, category, offset: resultPage * 100, limit: 100 }), [query, filter, scope, sort, language, tag, extension, category, resultPage]);
-  const search = useReferenceSearch(collection, request, setNotice);
+  useEffect(() => { if (operation && !modal.current?.open) modal.current?.showModal(); if (!operation) modal.current?.close(); }, [operation]);
+  useEffect(() => { if (shortcutsOpen && !shortcutsModal.current?.open) shortcutsModal.current?.showModal(); if (!shortcutsOpen) shortcutsModal.current?.close(); }, [shortcutsOpen]);
+  const request = useMemo(() => ({ query, scope, ...filters, offset: resultPage * 100, limit: 100 }), [query, scope, filters, resultPage]);
+  const onSearchError = useCallback((message: string) => setNotice(message), []);
+  const search = useReferenceSearch(collection, request, onSearchError);
   const referenceMap = useMemo(() => new Map(collection?.references.map(item => [item.path, item]) || []), [collection]);
   const results = search.paths.map(path => referenceMap.get(path)).filter((value): value is Reference => !!value);
-  const languages = useMemo(() => [...new Set(collection?.references.flatMap(referenceLanguages) || [])].sort(collator.compare), [collection]);
-  const tags = useMemo(() => [...new Set(collection?.references.flatMap(item => item.metadata.tags || []) || [])].sort(collator.compare).slice(0, 100), [collection]);
-  const extensions = useMemo(() => [...new Set(collection?.references.flatMap(item => item.files.map(extensionOf)) || [])].filter(Boolean).sort(), [collection]);
-  const categories = useMemo(() => [...new Set(collection?.references.map(item => typeof item.metadata.category === 'string' && item.metadata.category.trim() ? item.metadata.category : item.path.split('/')[0] || '') || [])].sort(collator.compare), [collection]);
-  async function refreshCapabilities() {
-    const result = await window.api.capabilities();
-    if (result.ok) setCaps(result.value);
+  const options = useMemo(() => {
+    const unique = (values: string[]) => [...new Set(values)].sort(collator.compare);
+    const references = collection?.references || [];
+    return {
+      languages: unique(references.flatMap(referenceLanguages)),
+      tags: unique(references.flatMap(item => item.metadata.tags || [])).slice(0, 300),
+      extensions: unique(references.flatMap(item => item.files.map(extensionOf))).filter(Boolean),
+      categories: unique(references.map(referenceCategory)),
+      platforms: unique(references.map(referencePlatform)).filter(Boolean)
+    };
+  }, [collection]);
+  const filtering = !!query || activeFilterCount(filters) > 0;
+  function setMode(next: Mode) {
+    if (next === mode) return;
+    setModeState(next); persist('mode', next);
+    setNotice(next === 'reading' ? 'Modo lectura: solo se muestra el contenido de cada referencia. Los archivos no se modifican.' : 'Modo edición: estructura completa, metadatos y archivos auxiliares visibles.');
+    if (next === 'editing' && reference && !openFiles.some(item => reference.files.includes(item.path))) void openFirst(reference);
   }
-  async function refreshPractice() {
-    const result = await window.api.practiceSelection();
-    if (result.ok) setPracticed(new Set(result.value.map(item => item.file)));
-  }
+  async function refreshCapabilities() { const result = await window.api.capabilities(); if (result.ok) setCaps(result.value); }
+  async function refreshPractice() { const result = await window.api.practiceSelection(); if (result.ok) setPracticed(new Set(result.value.map(item => item.file))); }
   async function run<T,>(task: () => Promise<Result<T>>, done?: (value: T) => void | Promise<void>, failed?: () => void) {
     setBusy(true);
     try { const result = await task(); if (!result.ok) { setNotice(result.error); failed?.(); } else await done?.(result.value); }
     catch { setNotice('No se pudo comunicar con el servicio local de la página. Recarga e inténtalo de nuevo.'); failed?.(); }
     finally { setBusy(false); }
   }
+  function changeQuery(value: string) { setQuery(value); setResultPage(0); if (value) setSideView('results'); }
+  function changeFilters(value: Filters) { setFilters(value); setResultPage(0); if (activeFilterCount(value)) setSideView('results'); }
+  function clearFilters() { setQuery(''); setFilters(emptyFilters); setScope(''); setResultPage(0); }
   function changeScope(path: string) { setScope(path); setResultPage(0); }
   function applyCollection(value: Collection | null, label: string) {
     if (!value) return;
-    sequence.current++; setCollection(value); setReference(undefined); setFile(undefined); setScope(''); setEdit(false);
-    setQuery(''); setFilter('all'); setLanguage(''); setTag(''); setExtension(''); setCategory(''); setResultPage(0); setWorkspace('library');
+    sequence.current++; setCollection(value); setReference(undefined); setOpenFiles([]); setActivePath(undefined); setScope('');
+    setQuery(''); setFilters(emptyFilters); setResultPage(0); setWorkspace('library'); setSideView('tree');
     setNotice(`${label}: ${value.references.length} referencias. ${value.warnings.length ? 'Revisa las advertencias del explorador.' : ''}`);
     void refreshCapabilities(); void refreshPractice();
   }
-  async function openLibrary(id: string) {
-    if (!canLeave()) return;
-    await run(() => window.api.openLibrary(id), value => applyCollection(value, 'Biblioteca abierta'));
-  }
-  async function openExamples() {
-    if (!canLeave()) return;
-    await run(() => window.api.open(true), value => applyCollection(value, 'Ejemplos abiertos'));
-  }
+  async function openLibrary(id: string) { if (!canLeave()) return; await run(() => window.api.openLibrary(id), value => applyCollection(value, 'Biblioteca abierta')); }
+  async function openExamples() { if (!canLeave()) return; await run(() => window.api.open(true), value => applyCollection(value, 'Ejemplos abiertos')); }
   async function snapshotChosen(files: FileList | File[], existingId?: string) {
     await run(() => window.api.addSnapshotLibrary(files, existingId), async value => {
       if (!value) return;
@@ -107,18 +150,47 @@ function App() {
       if (result.ok) applyCollection(result.value, 'Instantánea abierta'); else setNotice(result.error);
     });
   }
-  async function read(path: string, next?: Reference, editing = false) {
-    if (!canLeave()) return;
+  const ownerOf = (path: string, value = collection) => value?.references.find(item => item.files.includes(path)) || value?.references.filter(item => !item.path || path.startsWith(item.path + '/')).sort((a, b) => b.path.length - a.path.length)[0];
+  async function openFile(path: string, owner?: Reference) {
     const id = ++sequence.current;
-    const owner = next || collection?.references.find(item => item.files.includes(path));
+    const existing = openFiles.find(item => item.path === path);
+    setReference(owner || ownerOf(path));
+    if (existing) { setActivePath(path); return; }
     await run(() => window.api.read(path), value => {
-      if (id === sequence.current) { setReference(owner); setFile(value); setDraft(value.content); setEdit(editing); setTab('file'); setNotice('Archivo cargado. El código fuente se mantiene de solo lectura.'); }
-    }, () => { if (id === sequence.current) { setReference(owner); setFile(undefined); setDraft(''); setEdit(false); setTab('file'); } });
+      if (id !== sequence.current) return;
+      setOpenFiles(previous => previous.some(item => item.path === path) ? previous : [...previous, { ...value, draft: value.content }]);
+      setActivePath(path); setNotice(`Archivo abierto: ${path}`);
+    });
+  }
+  async function openFirst(ref: Reference) {
+    const first = ref.code[0] || ref.files.find(path => /\.(md|txt)$/i.test(path)) || ref.files.find(isMetadataFile);
+    if (first) await openFile(first, ref); else setReference(ref);
   }
   async function select(ref: Reference) {
-    const first = ref.code[0] || ref.files.find(path => /\.(md|txt)$/i.test(path)) || ref.files.find(isMetadataFile);
-    if (first) await read(first, ref);
-    else if (canLeave()) { sequence.current++; setReference(ref); setFile(undefined); setDraft(''); setEdit(false); setTab('metadata'); }
+    if (workspace !== 'library') setWorkspace('library');
+    if (editing) await openFirst(ref);
+    else { sequence.current++; setReference(ref); }
+  }
+  function closeFile(path: string) {
+    const target = openFiles.find(item => item.path === path);
+    if (target && target.draft !== target.content && !window.confirm(`«${path}» tiene cambios sin guardar. ¿Cerrar y descartarlos?`)) return;
+    const index = openFiles.findIndex(item => item.path === path);
+    const rest = openFiles.filter(item => item.path !== path);
+    setOpenFiles(rest);
+    if (activePath === path) setActivePath(rest[Math.min(index, rest.length - 1)]?.path);
+  }
+  const updateFile = (path: string, patch: Partial<OpenFile>) => setOpenFiles(previous => previous.map(item => item.path === path ? { ...item, ...patch } : item));
+  async function reloadOpenFiles(value: Collection) {
+    const present = new Set(value.entries.filter(entry => !entry.directory).map(entry => entry.path));
+    const next: OpenFile[] = [];
+    for (const item of openFiles) {
+      if (!present.has(item.path)) continue;
+      if (item.draft !== item.content) { next.push(item); continue; }
+      const updated = await window.api.read(item.path);
+      if (updated.ok) next.push({ ...updated.value, draft: updated.value.content, preview: item.preview });
+    }
+    setOpenFiles(next);
+    if (activePath && !next.some(item => item.path === activePath)) setActivePath(next[0]?.path);
   }
   async function refresh() {
     if (!canLeave()) return;
@@ -126,42 +198,33 @@ function App() {
       sequence.current++; setCollection(value); setResultPage(0);
       setReference(value.references.find(item => item.path === reference?.path));
       if (scope && !value.entries.some(entry => entry.directory && entry.path === scope)) setScope('');
-      setEdit(false);
-      if (file && value.entries.some(entry => !entry.directory && entry.path === file.path)) {
-        const updated = await window.api.read(file.path);
-        if (updated.ok) { setFile(updated.value); setDraft(updated.value.content); }
-        else { setFile(undefined); setNotice(updated.error); return; }
-      } else setFile(undefined);
+      setOpenFiles(previous => previous.map(item => ({ ...item, draft: item.content })));
+      await reloadOpenFiles(value);
       setNotice(`Biblioteca actualizada en ${value.stats?.durationMs ?? '?'} ms; ${value.stats?.cacheHits ?? 0} referencias reutilizadas desde caché.`);
     });
   }
   async function save() {
-    if (!file) return;
-    await run(() => window.api.save(file.path, draft, file.version), async value => {
-      setFile(value); setDraft(value.content); setEdit(false); setNotice('Archivo guardado.');
+    if (!file || !caps.write || file.draft === file.content) return;
+    const path = file.path;
+    await run(() => window.api.save(path, file.draft, file.version), async value => {
+      updateFile(path, { ...value, draft: value.content }); setNotice(`Guardado: ${path}`);
       const updated = await window.api.refresh();
-      if (updated.ok) { setCollection(updated.value); setReference(updated.value.references.find(item => item.path === reference?.path)); }
+      if (updated.ok) { setCollection(updated.value); setReference(updated.value.references.find(item => item.path === reference?.path) || ownerOf(path, updated.value)); }
       else setNotice(`El archivo se guardó, pero no se pudo actualizar el índice: ${updated.error}`);
     });
   }
   async function supplement(kind: 'notes' | 'metadata') {
-    if (!reference || !canLeave()) return;
+    if (!reference) return;
     const ownerPath = reference.path;
     await run(() => window.api.supplement(ownerPath, kind), async value => {
       setCollection(value);
       const owner = value.references.find(item => item.path === ownerPath);
       const target = owner?.files.find(path => kind === 'metadata' ? isMetadataFile(path) : /(?:^|[\\/])notes\.md$/i.test(path));
-      if (target) {
-        const loaded = await window.api.read(target);
-        if (loaded.ok) { setReference(owner); setFile(loaded.value); setDraft(loaded.value.content); setEdit(true); setTab('file'); setNotice('Archivo complementario creado.'); }
-        else setNotice(loaded.error);
-      }
+      if (owner) setReference(owner);
+      if (target) { setModeState('editing'); persist('mode', 'editing'); await openFile(target, owner); setNotice('Archivo complementario creado.'); }
     });
   }
-  async function assignId() {
-    if (!reference) return;
-    await run(() => window.api.assignStableId(reference.path), value => { setCollection(value); setNotice('ID estable asignado en los metadatos.'); });
-  }
+  async function assignId() { if (reference) await run(() => window.api.assignStableId(reference.path), value => { setCollection(value); setReference(value.references.find(item => item.path === reference.path)); setNotice('ID estable asignado en los metadatos.'); }); }
   async function assignAllIds() {
     if (!window.confirm('Se insertará un campo «id» en los metadatos de todas las referencias que no lo tengan. ¿Continuar?')) return;
     await run(() => window.api.assignMissingIds(), value => { setCollection(value); setNotice('IDs asignados donde faltaban.'); });
@@ -170,9 +233,7 @@ function App() {
     await run(() => window.api.exportLibraryIndex(), value => {
       const blob = new Blob([value.json], { type: 'application/json;charset=utf-8' });
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = value.filename;
-      link.click();
+      link.href = URL.createObjectURL(blob); link.download = value.filename; link.click();
       setTimeout(() => URL.revokeObjectURL(link.href), 30000);
       setNotice(`Índice descargado: ${value.filename}`);
     });
@@ -184,49 +245,221 @@ function App() {
       setNotice(next ? 'Archivo marcado para practicar.' : 'Archivo desmarcado.');
     });
   }
-  const highlighted = useMemo(() => {
-    if (!file || file.content.length > 150000) return null;
-    const extensionValue = file.path.split('.').pop()?.toLowerCase() || '';
-    const languageValue = ({ h: 'cpp', hpp: 'cpp', cc: 'cpp', rs: 'rust', py: 'python', js: 'javascript', ts: 'typescript', md: 'markdown', yml: 'yaml', kt: 'kotlin', cs: 'csharp' } as Record<string, string>)[extensionValue] || extensionValue;
-    return hljs.getLanguage(languageValue) ? hljs.highlight(file.content, { language: languageValue }).value : null;
-  }, [file]);
-  function startOperation(kind: 'folder' | 'reference' | 'rename', source = reference?.path || scope) {
-    if (!canLeave()) return;
-    if (file) setDraft(file.content); setEdit(false);
+  function startOperation(kind: Operation, source = reference?.path || scope) {
+    if (!caps.write) { setNotice('Esta biblioteca es de solo lectura.'); return; }
+    if (kind === 'rename' && dirty && !canLeave()) return;
     setOperationSource(source); setOperation(kind);
-    setDestination(kind === 'rename' ? source : scope ? scope + '/' : '');
+    const base = kind === 'rename' ? source : source ? source + '/' : '';
+    setDestination(kind === 'file' ? base + 'explicacion.md' : base);
     setNotice('Escribe una ruta relativa a la biblioteca. No se sobrescriben destinos existentes.');
+  }
+  async function afterStructureChange(value: Collection, message: string, open?: string) {
+    sequence.current++; setCollection(value); setResultPage(0); setOperation(undefined);
+    setReference(previous => previous && value.references.find(item => item.path === previous.path));
+    if (scope && !value.entries.some(entry => entry.directory && entry.path === scope)) setScope('');
+    const present = new Set(value.entries.filter(entry => !entry.directory).map(entry => entry.path));
+    const rest = openFiles.filter(item => present.has(item.path));
+    setOpenFiles(rest); if (activePath && !present.has(activePath)) setActivePath(rest[0]?.path);
+    setNotice(message);
+    if (open) await openFile(open, ownerOf(open, value));
   }
   async function submitOperation(event: React.FormEvent) {
     event.preventDefault();
     if (!operation) return;
     if (operation === 'rename' && !window.confirm(`¿Mover o renombrar «${operationSource}» a «${destination}»?`)) return;
-    await run(() => operation === 'rename' ? window.api.rename(operationSource, destination) : window.api.create(destination, operation), value => {
-      sequence.current++; setCollection(value); setReference(undefined); setFile(undefined); setScope(''); setResultPage(0); setOperation(undefined); setNotice('Operación completada.');
-    });
+    const target = destination.trim().replace(/\/+$/, '');
+    await run(() => operation === 'rename' ? window.api.rename(operationSource, target) : window.api.create(target, operation), value => afterStructureChange(value, 'Operación completada.', operation === 'file' ? target : undefined));
+  }
+  async function removeEntry(path: string) {
+    if (!caps.write || !path) return;
+    const affected = openFiles.filter(item => (item.path === path || item.path.startsWith(path + '/')) && item.draft !== item.content);
+    if (!window.confirm(`¿Eliminar «${path}» de la biblioteca${affected.length ? ' y descartar los cambios sin guardar' : ''}? Esta acción borra el archivo o la carpeta del disco.`)) return;
+    await run(() => window.api.remove(path), value => afterStructureChange(value, `Eliminado: ${path}`));
+  }
+  function printReference(ref = reference) {
+    if (!ref || !canLeave()) return;
+    setPrintSelection({ paths: [ref.path], n: Date.now() }); setDocumentOpened(true); setWorkspace('document');
+  }
+  function openDocument() { if (!canLeave()) return; setPrintSelection(undefined); setDocumentOpened(true); setWorkspace('document'); }
+  function treeContext(entry: Entry | undefined, x: number, y: number) {
+    const path = entry?.path || '';
+    const folder = entry ? entry.directory ? path : path.split('/').slice(0, -1).join('/') : '';
+    const ref = entry?.directory ? referenceMap.get(path) : undefined;
+    const items: ContextItem[] = [];
+    if (entry && !entry.directory) items.push({ label: 'Abrir', action: () => openFile(path) });
+    if (ref) items.push({ label: 'Abrir referencia', action: () => select(ref) }, { label: 'Imprimir referencia', action: () => printReference(ref) });
+    if (caps.write && editing) items.push(
+      { label: 'Nuevo archivo aquí…', action: () => startOperation('file', folder) },
+      { label: 'Nueva carpeta aquí…', action: () => startOperation('folder', folder) },
+      { label: 'Nueva referencia aquí…', action: () => startOperation('reference', folder) });
+    if (caps.rename && editing && entry) items.push({ label: 'Mover / renombrar…', shortcut: 'F2', action: () => startOperation('rename', path) });
+    if (caps.write && editing && entry) items.push({ label: 'Eliminar…', shortcut: 'Supr', danger: true, action: () => removeEntry(path) });
+    if (entry) items.push({ label: 'Copiar ruta', action: () => run(() => window.api.reveal(path), () => setNotice('Ruta copiada al portapapeles.')) });
+    if (!entry) items.push({ label: 'Plegar todo', action: () => setCollapseSignal(value => ({ all: true, n: value.n + 1 })) }, { label: 'Desplegar todo', action: () => setCollapseSignal(value => ({ all: false, n: value.n + 1 })) });
+    if (items.length) setContext({ x, y, items });
   }
   const metadataFile = reference?.files.find(isMetadataFile);
   const needsStableId = reference ? !(typeof reference.metadata.id === 'string' && stableIdPattern.test(reference.metadata.id)) : false;
   const externalLabel = caps.kind === 'github' ? 'Abrir en GitHub' : 'Descargar archivo';
-  return <div className="app">
-    <header><div><h1>Referencias de programación competitiva</h1><small>{collection ? `${caps.kind === 'github' ? 'GitHub · solo lectura' : caps.kind === 'local-fs' ? 'Carpeta local' : caps.kind === 'local-snapshot' ? 'Instantánea · solo lectura' : 'Ejemplos'} · ${caps.activeId || ''}` : 'Bibliotecas de referencias · sin servicios propios'}</small></div><div className="actions"><button disabled={busy} onClick={() => setWorkspace('libraries')}>Bibliotecas</button><button disabled={busy} onClick={openExamples}>Abrir ejemplos</button><button disabled={busy || !collection || !caps.refresh} onClick={refresh}>Actualizar</button>{caps.dirty && <span className="warning">La carpeta tiene cambios externos; usa Actualizar.</span>}</div></header>
-    <div className="status" role="status" aria-live="polite">{busy ? 'Procesando… ' : ''}{notice}</div>
-    {collection && <><nav className="workspace-tabs" aria-label="Espacios de trabajo"><button disabled={busy} aria-pressed={workspace === 'library'} onClick={() => setWorkspace('library')}>Biblioteca</button><button disabled={busy} aria-pressed={workspace === 'libraries'} onClick={() => setWorkspace('libraries')}>Bibliotecas</button><button disabled={busy} aria-pressed={workspace === 'document'} onClick={() => { if (canLeave()) { if (file) setDraft(file.content); setEdit(false); setDocumentOpened(true); setWorkspace('document'); } }}>Generar documento</button></nav>
-    <div className="library-workspace" hidden={workspace !== 'library'}><section className="toolbar"><input aria-label="Buscar referencias" maxLength={1000} placeholder="Buscar por título, etiquetas, notas o código…" value={query} onChange={event => { setQuery(event.target.value); setResultPage(0); }} /><select aria-label="Filtrar referencias" value={filter} onChange={event => { setFilter(event.target.value); setResultPage(0); }}><option value="all">Todas las referencias</option><option value="no-code">Sin código</option><option value="no-metadata">Sin metadatos</option><option value="warnings">Con advertencias</option></select><select aria-label="Ordenar referencias" value={sort} onChange={event => { setSort(event.target.value); setResultPage(0); }}><option value="title">Ordenar por título</option><option value="modified">Modificación reciente</option></select><select aria-label="Filtrar por lenguaje" value={language} onChange={event => { setLanguage(event.target.value); setResultPage(0); }}><option value="">Todos los lenguajes</option>{languages.map(value => <option key={value}>{value}</option>)}</select><select aria-label="Filtrar por extensión" value={extension} onChange={event => { setExtension(event.target.value); setResultPage(0); }}><option value="">Toda extensión</option>{extensions.map(value => <option key={value}>{value}</option>)}</select><select aria-label="Filtrar por categoría" value={category} onChange={event => { setCategory(event.target.value); setResultPage(0); }}><option value="">Toda categoría</option>{categories.map(value => <option key={value}>{value || '(sin categoría)'}</option>)}</select><input className="tag-filter" aria-label="Filtrar por etiqueta" maxLength={500} placeholder="Etiqueta exacta…" list="tag-options" value={tag} onChange={event => { setTag(event.target.value); setResultPage(0); }} /><datalist id="tag-options">{tags.map(value => <option key={value}>{value}</option>)}</datalist>{caps.write && <button disabled={busy} onClick={() => startOperation('folder')}>Nueva carpeta</button>}{caps.write && <button disabled={busy} onClick={() => startOperation('reference')}>Nueva referencia</button>}{caps.write && <button disabled={busy} onClick={assignAllIds}>Asignar IDs faltantes</button>}<button disabled={busy} onClick={exportIndex}>Exportar índice de biblioteca</button></section>
-    <main><aside className={explorerOpen ? '' : 'explorer-collapsed'}><h2>Explorador</h2><button className="explorer-toggle" onClick={() => setExplorerOpen(!explorerOpen)}>{explorerOpen ? 'Ocultar explorador' : 'Mostrar explorador'}</button>{caps.rename && <button disabled={busy || !scope} onClick={() => startOperation('rename', scope)}>Mover carpeta seleccionada</button>}<FolderTree key={caps.activeId || 'root'} collection={collection} scope={scope} busy={busy} onFolder={changeScope} onFile={path => read(path)} />{!!collection.warnings.length && <details className="collection-warnings"><summary>Advertencias ({collection.warnings.length})</summary>{collection.warnings.map((warning, index) => <p className="warning" key={index}>{warning}</p>)}</details>}</aside>
-    <section className="list" aria-busy={search.searching}><h2>Referencias <span>{search.total}</span></h2><small>{scope || 'Toda la biblioteca'}{search.searching ? ' · Buscando…' : ''}</small><div className="result-pager"><button aria-label="Resultados anteriores" disabled={search.searching || resultPage === 0} onClick={() => setResultPage(value => value - 1)}>Anterior</button><span>{resultPage + 1} / {Math.max(1, Math.ceil(search.total / 100))}</span><button aria-label="Resultados siguientes" disabled={search.searching || (resultPage + 1) * 100 >= search.total} onClick={() => setResultPage(value => value + 1)}>Siguiente</button></div>{!results.length && !search.searching && <><p>No hay referencias que coincidan con la búsqueda.</p><button onClick={() => { setQuery(''); setFilter('all'); setScope(''); setLanguage(''); setTag(''); setExtension(''); setCategory(''); setResultPage(0); }}>Limpiar filtros</button></>}{results.map(ref => <button disabled={busy} className={'reference ' + (reference?.path === ref.path ? 'selected' : '')} key={ref.path} onClick={() => select(ref)}><strong>{ref.title}</strong><small>{ref.path || '(raíz)'}</small><span>{ref.metadata.description}</span><small>{ref.code.length} archivos de código · {ref.hasMetadata ? 'Con metadatos' : 'Sin metadatos'}</small>{!!ref.warnings.length && <small className="warning">{ref.warnings.length} advertencias</small>}</button>)}</section>
-    <section className="viewer"><div className="viewer-heading"><div><h2>{reference?.title || (file ? 'Archivo de la biblioteca' : 'Selecciona una referencia')}</h2><small>{reference?.path}</small></div>{caps.rename && <button disabled={busy || !reference?.path} onClick={() => startOperation('rename', reference?.path)}>Mover / renombrar</button>}</div>
-    {reference && <><div className="tabs"><button onClick={() => setTab('file')}>Archivos</button><button onClick={() => setTab('metadata')}>Metadatos</button><button onClick={() => setTab('help')}>Ayuda</button>{caps.write && <button disabled={busy} onClick={() => metadataFile ? read(metadataFile, reference, true) : supplement('metadata')}>{metadataFile ? 'Editar metadatos' : 'Añadir metadatos'}</button>}{caps.write && !reference.files.some(path => /\.md$/i.test(path)) && <button disabled={busy} onClick={() => supplement('notes')}>Añadir notas</button>}{caps.write && needsStableId && <button disabled={busy} onClick={assignId}>Asignar ID estable</button>}</div>{reference.warnings.map((warning, index) => <p className="warning" key={index}>{warning}</p>)}</>}
-    {tab === 'metadata' && reference ? <dl>{Object.entries(reference.metadata).map(([key, value]) => <React.Fragment key={key}><dt>{metadataLabels[key] || key}</dt><dd><pre>{typeof value === 'string' ? value : JSON.stringify(value, null, 2)}</pre></dd></React.Fragment>)}{!Object.keys(reference.metadata).length && <p>No hay metadatos válidos. Edita el archivo original o añade metadatos para completar esta referencia.</p>}</dl> : tab === 'help' ? <article><h3>Uso básico</h3><p>Las carpetas y las referencias no necesitan una estructura fija. Las flechas del explorador pliegan ramas; los nombres de carpetas limitan la búsqueda.</p><p>Busca por nombre, ruta, etiquetas, notas o código. La búsqueda ignora acentos y mayúsculas. Las listas muestran 100 resultados por página.</p><p>El código es de solo lectura. Las bibliotecas de GitHub e instantáneas no admiten edición; en carpetas locales puedes editar notas y metadatos.</p><p>Generar documento permite seleccionar carpetas o referencias y exportar el documento previsualizado a PDF mediante la impresión del navegador.</p><p>Consulta README.md del proyecto para despliegue, formatos y límites.</p></article> : <>
-    {!!reference?.files.length && <select aria-label="Archivo de la referencia" disabled={busy} value={file && reference.files.includes(file.path) ? file.path : ''} onChange={event => read(event.target.value)}><option value="" disabled>Selecciona un archivo</option>{reference.files.map(path => <option key={path} value={path}>{path}</option>)}</select>}
-    {file && <><div className="file-actions"><strong>{file.path}{dirty ? ' · Cambios sin guardar' : ''}</strong><button disabled={busy} onClick={() => run(() => window.api.copy(edit ? draft : file.content), () => setNotice('Contenido copiado al portapapeles.'))}>{edit ? 'Copiar borrador' : 'Copiar'}</button><button disabled={busy} onClick={() => run(() => window.api.external(file.path))}>{externalLabel}</button><button disabled={busy} onClick={() => run(() => window.api.reveal(file.path), () => setNotice('Ruta copiada al portapapeles.'))}>Copiar ruta</button><button disabled={busy} onClick={() => read(file.path, reference)}>Recargar archivo</button>{/\.(md|ya?ml)$/i.test(file.path) && caps.write && <button disabled={busy} onClick={() => { if (canLeave()) { setEdit(!edit); setDraft(file.content); } }}>{edit ? 'Cancelar edición' : 'Editar'}</button>}{/\.(cpp|cc|c|h|hpp|py|java|rs|js|ts|go|kt|cs|rb|swift)$/i.test(file.path) && <button aria-pressed={practiced.has(file.path)} disabled={busy} onClick={() => togglePractice(file.path)}>{practiced.has(file.path) ? '✓ Seleccionado para practicar' : 'Seleccionar para practicar'}</button>}</div>
-    {edit ? <><textarea aria-label="Contenido del archivo" spellCheck={false} value={draft} onChange={event => setDraft(event.target.value)} /><button disabled={busy || !dirty} onClick={save}>Guardar cambios</button></> : /\.md$/i.test(file.path) && file.content.length <= 150000 ? <article className="markdown"><Markdown skipHtml components={{ a: ({ children }) => <span>{children}</span>, img: ({ alt }) => <span>[Imagen: {alt}]</span> }}>{file.content}</Markdown></article> : <>{file.content.length > 150000 && <p className="muted">Vista de texto simple para mantener el rendimiento con archivos grandes.</p>}<pre className="code">{highlighted ? <code dangerouslySetInnerHTML={{ __html: highlighted }} /> : <code>{file.content}</code>}</pre></>}</>}
-    {!file && <p>Selecciona un archivo del explorador para leerlo. Las bibliotecas de solo lectura muestran el contenido sin opciones de edición.</p>}</>}
-    </section></main><footer>{collection.references.length} referencias · {collection.entries.length} elementos · Archivos UTF-8 hasta 2 MiB · Indexación en worker{caps.write ? '' : ' · Solo lectura'}</footer></div>
-    <div className="document-panel" hidden={workspace !== 'document'}>{documentOpened && <Suspense fallback={<p>Abriendo el generador de documentos…</p>}><DocumentWorkspace key={caps.activeId || 'root'} collection={collection} busy={busy} onBusy={setBusy} /></Suspense>}</div></>}
-    <div className="libraries-workspace" hidden={workspace !== 'libraries'}><LibrariesPanel busy={busy} onBusy={setBusy} onOpen={openLibrary} onSnapshot={snapshotChosen} onNotice={setNotice} /></div>
-    {!collection && workspace !== 'libraries' && <section className="welcome"><h2>Tu colección, en tus archivos</h2><p>Organiza algoritmos, soluciones y apuntes sin una estructura obligatoria ni una base de datos propietaria.</p><p>Conecta un repositorio público de GitHub, una carpeta local o usa la colección de ejemplos para probar el gestor.</p><p>Las consultas y la generación de documentos no escriben sobre tus referencias. Las ediciones de notas y metadatos requieren guardar explícitamente.</p><div className="actions"><button onClick={openExamples}>Abrir ejemplos</button><button onClick={() => setWorkspace('libraries')}>Conectar una biblioteca</button></div></section>}
-    <dialog className="management-dialog" ref={modal} aria-label="Gestionar archivos" onCancel={() => { if (!busy) setOperation(undefined); }} onKeyDown={event => { if (busy && event.key === 'Escape') event.preventDefault(); }}><form onSubmit={submitOperation}><h2>{operation === 'folder' ? 'Nueva carpeta' : operation === 'reference' ? 'Nueva referencia' : 'Mover o renombrar'}</h2>{operation === 'rename' && <p>Origen: {operationSource}</p>}<label>Ruta relativa a la biblioteca<input autoFocus required value={destination} onChange={event => setDestination(event.target.value)} placeholder="temas/grafos/mi-referencia" /></label><p>La carpeta padre debe existir. No se sobrescriben destinos existentes.</p><p role="status">{notice}</p><button disabled={busy} type="submit">Confirmar</button><button disabled={busy} type="button" onClick={() => setOperation(undefined)}>Cancelar</button></form></dialog>
+  const selectedPath = editing ? activePath || reference?.path : reference?.path;
+  const actions = useRef<Record<string, () => void>>({});
+  actions.current = {
+    search: () => { setSidebarOpen(true); setWorkspace('library'); setTimeout(() => searchInput.current?.focus(), 0); },
+    filters: () => { setSidebarOpen(true); setWorkspace('library'); setFilterSignal(Date.now()); },
+    sidebar: () => setSidebarOpen(value => !value),
+    info: () => setInfoOpen(value => !value),
+    mode: () => setMode(editing ? 'reading' : 'editing'),
+    save: () => void save(),
+    close: () => { if (activePath && editing) closeFile(activePath); },
+    print: () => { if (reference) printReference(); else if (collection) openDocument(); },
+    document: () => { if (collection) openDocument(); },
+    refresh: () => { if (collection && caps.refresh) void refresh(); },
+    newReference: () => { if (caps.write) startOperation('reference', scope); },
+    rename: () => { if (caps.rename && editing && (activePath || reference?.path)) startOperation('rename', activePath || reference!.path); },
+    help: () => setShortcutsOpen(true)
+  };
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const control = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
+      const typing = (event.target as HTMLElement)?.closest?.('input,textarea,select,[contenteditable=true]');
+      const map: [boolean, string][] = [
+        [control && !event.shiftKey && key === 'k', 'search'], [control && event.shiftKey && key === 'f', 'filters'], [control && !event.shiftKey && key === 'b', 'sidebar'],
+        [event.altKey && key === 'i', 'info'], [event.altKey && key === 'm', 'mode'], [control && key === 's', 'save'], [event.altKey && key === 'w', 'close'],
+        [control && !event.shiftKey && key === 'p', 'print'], [control && event.shiftKey && key === 'p', 'document'], [event.altKey && key === 'r', 'refresh'],
+        [event.altKey && key === 'n', 'newReference'], [!typing && event.key === 'F2', 'rename'], [!typing && event.key === 'F1', 'help']
+      ];
+      const hit = map.find(([match]) => match);
+      if (hit && !operation) { event.preventDefault(); actions.current[hit[1]](); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [operation]);
+  const has = !!collection;
+  const menus: Menu[] = [
+    { label: 'Archivo', items: [
+      { label: 'Abrir ejemplos', action: openExamples, disabled: busy },
+      { label: 'Gestionar bibliotecas…', action: () => setWorkspace('libraries') },
+      { separator: true },
+      { label: 'Nueva referencia…', shortcut: 'Alt+N', action: () => startOperation('reference', scope), disabled: !has || !caps.write },
+      { label: 'Nueva carpeta…', action: () => startOperation('folder', scope), disabled: !has || !caps.write },
+      { label: 'Nuevo archivo…', action: () => startOperation('file', reference?.path || scope), disabled: !has || !caps.write },
+      { separator: true },
+      { label: 'Guardar', shortcut: 'Ctrl+S', action: save, disabled: !file || !caps.write || file.draft === file.content },
+      { label: 'Cerrar pestaña', shortcut: 'Alt+W', action: () => activePath && closeFile(activePath), disabled: !activePath || !editing },
+      { separator: true },
+      { label: 'Exportar índice de biblioteca', action: exportIndex, disabled: !has || busy }
+    ] },
+    { label: 'Editar', items: [
+      { label: 'Copiar contenido', action: () => file && run(() => window.api.copy(file.draft), () => setNotice('Contenido copiado al portapapeles.')), disabled: !file || !editing },
+      { label: 'Copiar ruta', action: () => { const path = activePath || reference?.path; if (path !== undefined) void run(() => window.api.reveal(path), () => setNotice('Ruta copiada al portapapeles.')); }, disabled: !activePath && !reference },
+      { separator: true },
+      { label: 'Mover / renombrar…', shortcut: 'F2', action: actions.current.rename, disabled: !caps.rename || !editing || (!activePath && !reference?.path) },
+      { label: 'Eliminar…', action: () => removeEntry(activePath || reference?.path || ''), disabled: !caps.write || !editing || (!activePath && !reference?.path) },
+      { separator: true },
+      { label: metadataFile ? 'Editar metadatos' : 'Añadir metadatos', action: () => metadataFile ? (setMode('editing'), openFile(metadataFile, reference)) : supplement('metadata'), disabled: !reference || !caps.write },
+      { label: 'Añadir notas', action: () => supplement('notes'), disabled: !reference || !caps.write || reference.files.some(path => /\.md$/i.test(path)) },
+      { label: 'Asignar ID estable', action: assignId, disabled: !reference || !caps.write || !needsStableId },
+      { label: 'Asignar IDs faltantes', action: assignAllIds, disabled: !has || !caps.write }
+    ] },
+    { label: 'Ver', items: [
+      { label: 'Modo lectura', checked: !editing, action: () => setMode('reading') },
+      { label: 'Modo edición', checked: editing, shortcut: 'Alt+M', action: () => setMode('editing') },
+      { separator: true },
+      { label: 'Barra lateral', checked: sidebarOpen, shortcut: 'Ctrl+B', action: () => setSidebarOpen(!sidebarOpen) },
+      { label: 'Panel de información', checked: infoOpen, shortcut: 'Alt+I', action: () => setInfoOpen(!infoOpen) },
+      { label: 'Tema claro', checked: theme === 'light', action: () => setTheme(theme === 'light' ? 'dark' : 'light') },
+      { separator: true },
+      { label: 'Plegar todo el árbol', action: () => setCollapseSignal(value => ({ all: true, n: value.n + 1 })), disabled: !has },
+      { label: 'Desplegar todo el árbol', action: () => setCollapseSignal(value => ({ all: false, n: value.n + 1 })), disabled: !has }
+    ] },
+    { label: 'Biblioteca', items: [
+      { label: 'Buscar', shortcut: 'Ctrl+K', action: actions.current.search, disabled: !has },
+      { label: 'Filtros…', shortcut: 'Ctrl+Shift+F', action: actions.current.filters, disabled: !has },
+      { label: 'Limpiar filtros', action: clearFilters, disabled: !has || (!filtering && !scope) },
+      { separator: true },
+      { label: 'Actualizar', shortcut: 'Alt+R', action: refresh, disabled: !has || !caps.refresh || busy },
+      { label: 'Gestionar bibliotecas…', action: () => setWorkspace('libraries') }
+    ] },
+    { label: 'Herramientas', items: [
+      { label: file && practiced.has(file.path) ? 'Quitar de práctica' : 'Seleccionar para practicar', action: () => file && togglePractice(file.path), disabled: !file || !editing || !codeExtensions.has(extensionOf(file.path)) },
+      { label: 'Abrir archivo externo', action: () => file && run(() => window.api.external(file.path)), disabled: !file || !editing }
+    ] },
+    { label: 'Imprimir', items: [
+      { label: 'Imprimir referencia actual…', shortcut: 'Ctrl+P', action: () => printReference(), disabled: !reference },
+      { label: 'Generador de documentos…', shortcut: 'Ctrl+Shift+P', action: openDocument, disabled: !has }
+    ] },
+    { label: 'Ayuda', items: [
+      { label: 'Atajos de teclado', shortcut: 'F1', action: () => setShortcutsOpen(true) },
+      { label: 'Formato de documentación', action: () => window.open('https://github.com/JosephJTC/ReferenceManager#formato-de-documentaci%C3%B3n', '_blank', 'noopener') }
+    ] }
+  ];
+  const resultsList = <div className="results" aria-busy={search.searching}>
+    <div className="results-head"><span>{search.total} referencias{scope ? ` en ${scope}` : ''}{search.searching ? ' · Buscando…' : ''}</span>{search.total > 100 && <span className="pager"><button className="icon-button" aria-label="Resultados anteriores" disabled={search.searching || resultPage === 0} onClick={() => setResultPage(value => value - 1)}>‹</button>{resultPage + 1}/{Math.ceil(search.total / 100)}<button className="icon-button" aria-label="Resultados siguientes" disabled={search.searching || (resultPage + 1) * 100 >= search.total} onClick={() => setResultPage(value => value + 1)}>›</button></span>}</div>
+    {!results.length && !search.searching && <div className="empty"><p>No hay referencias que coincidan.</p><button onClick={clearFilters}>Limpiar filtros</button></div>}
+    {results.map(ref => <button disabled={busy} className={'reference ' + (reference?.path === ref.path ? 'selected' : '')} key={ref.path} onClick={() => select(ref)}><strong>{ref.title}</strong><small>{ref.path || '(raíz)'}</small>{ref.metadata.description && <span>{ref.metadata.description}</span>}{editing && <small className="ref-meta">{ref.code.length} código · {ref.hasMetadata ? 'con metadatos' : 'sin metadatos'}{ref.warnings.length ? <em className="warning"> · {ref.warnings.length} advertencias</em> : null}</small>}</button>)}
+  </div>;
+  const editorPane = <div className="editor">
+    <div className="editor-tabs" role="tablist" aria-label="Archivos abiertos">{openFiles.map(item => <div key={item.path} className={`editor-tab ${item.path === activePath ? 'active' : ''}`} role="tab" aria-selected={item.path === activePath}><button className="editor-tab-label" title={item.path} onClick={() => { setActivePath(item.path); setReference(ownerOf(item.path)); }}><FileBadge name={item.path} />{item.path.split('/').pop()}{item.draft !== item.content && <span className="dirty-dot" aria-label="Cambios sin guardar">●</span>}</button><button className="icon-button" aria-label={`Cerrar ${item.path}`} onClick={() => closeFile(item.path)}><Icon name="close" size={12} /></button></div>)}</div>
+    {file ? <>
+      <div className="file-actions"><span className="breadcrumbs">{file.path}{file.draft !== file.content ? ' · Cambios sin guardar' : ''}</span><span className="spacer" />
+        {caps.write && isEditableFile(file.path) && <button disabled={busy || file.draft === file.content} className="primary" onClick={save}>Guardar cambios</button>}
+        {caps.write && isEditableFile(file.path) && <button aria-pressed={!!file.preview} disabled={busy} onClick={() => updateFile(file.path, { preview: !file.preview })}>{file.preview ? 'Editar' : 'Vista previa'}</button>}
+        <button disabled={busy} onClick={() => run(() => window.api.copy(file.draft), () => setNotice('Contenido copiado al portapapeles.'))}>Copiar</button>
+        <button disabled={busy} onClick={() => run(() => window.api.external(file.path))}>{externalLabel}</button>
+        <button disabled={busy} onClick={() => run(() => window.api.reveal(file.path), () => setNotice('Ruta copiada al portapapeles.'))}>Copiar ruta</button>
+        {codeExtensions.has(extensionOf(file.path)) && <button aria-pressed={practiced.has(file.path)} disabled={busy} onClick={() => togglePractice(file.path)}>{practiced.has(file.path) ? '✓ Para practicar' : 'Seleccionar para practicar'}</button>}
+      </div>
+      <div className="editor-body">{caps.write && isEditableFile(file.path) && !file.preview
+        ? <textarea aria-label="Contenido del archivo" spellCheck={false} value={file.draft} onChange={event => updateFile(file.path, { draft: event.target.value })} onKeyDown={event => { if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); const target = event.currentTarget, start = target.selectionStart, end = target.selectionEnd; const next = file.draft.slice(0, start) + '    ' + file.draft.slice(end); updateFile(file.path, { draft: next }); requestAnimationFrame(() => { target.selectionStart = target.selectionEnd = start + 4; }); } }} />
+        : /\.md$/i.test(file.path) && file.draft.length <= 150000 ? <article className="doc-preview"><MarkdownView content={file.draft} file={file.path} prefix="edit" /></article> : <CodeView content={file.draft} name={file.path} />}</div>
+    </> : <div className="empty-editor"><p>{reference ? 'Esta referencia no tiene archivos legibles.' : 'Abre un archivo desde el explorador o selecciona una referencia.'}</p><p className="muted">Ctrl+K busca · Alt+M cambia de modo · F1 muestra los atajos</p></div>}
+  </div>;
+  const propertiesPane = reference && <aside className="reading-info properties" aria-label="Propiedades de la referencia">
+    <section><h3>Referencia</h3><strong>{reference.title}</strong><small className="block">{reference.path || '(raíz)'}</small>
+      <div className="stack-buttons">{caps.write && <button disabled={busy} onClick={() => metadataFile ? openFile(metadataFile, reference) : supplement('metadata')}>{metadataFile ? 'Editar metadatos' : 'Añadir metadatos'}</button>}{caps.write && !reference.files.some(path => /\.md$/i.test(path)) && <button disabled={busy} onClick={() => supplement('notes')}>Añadir notas</button>}{caps.write && needsStableId && <button disabled={busy} onClick={assignId}>Asignar ID estable</button>}{caps.rename && <button disabled={busy || !reference.path} onClick={() => startOperation('rename', reference.path)}>Mover / renombrar</button>}</div></section>
+    {reference.warnings.length > 0 && <section><h3>Advertencias</h3>{reference.warnings.map((warning, index) => <p className="warning" key={index}>{warning}</p>)}</section>}
+    <section><h3>Archivos</h3>{reference.files.map(path => <button key={path} className={`file-link ${path === activePath ? 'selected' : ''}`} onClick={() => openFile(path, reference)}><FileBadge name={path} />{path.slice(reference.path ? reference.path.length + 1 : 0)}</button>)}</section>
+    <section><h3>Metadatos</h3>{Object.keys(reference.metadata).length ? <dl>{Object.entries(reference.metadata).map(([key, value]) => <React.Fragment key={key}><dt>{metadataLabels[key] || key}</dt><dd><pre>{typeof value === 'string' ? value : JSON.stringify(value, null, 2)}</pre></dd></React.Fragment>)}</dl> : <p className="muted">No hay metadatos válidos.</p>}</section>
+  </aside>;
+  return <div className={`app mode-${mode}`}>
+    <header className="titlebar">
+      <span className="brand" title="Gestor de referencias de programación competitiva">⟨/⟩ RefManager</span>
+      <MenuBar menus={menus} />
+      <span className="spacer" />
+      {caps.dirty && <span className="warning small">Cambios externos: usa Actualizar</span>}
+      {has && <div className="mode-switch" role="radiogroup" aria-label="Modo de trabajo"><button role="radio" aria-checked={!editing} onClick={() => setMode('reading')}>Lectura</button><button role="radio" aria-checked={editing} onClick={() => setMode('editing')}>Edición</button></div>}
+      <button className="icon-button" aria-label={theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'} title="Cambiar tema" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
+    </header>
+    <div className="workbench">
+      <nav className="activitybar" aria-label="Espacios de trabajo">
+        <button aria-pressed={workspace === 'library'} aria-label="Biblioteca" title="Biblioteca" disabled={!has} onClick={() => { if (workspace === 'library') setSidebarOpen(!sidebarOpen); else setWorkspace('library'); }}><Icon name="explorer" size={20} /></button>
+        <button aria-pressed={workspace === 'libraries'} aria-label="Bibliotecas" title="Gestionar bibliotecas" onClick={() => setWorkspace('libraries')}><Icon name="libraries" size={20} /></button>
+        <button aria-pressed={workspace === 'document'} aria-label="Generar documento" title="Generar documento (Ctrl+Shift+P)" disabled={!has} onClick={openDocument}><Icon name="document" size={20} /></button>
+        <span className="spacer" />
+        <button aria-label="Atajos de teclado" title="Atajos de teclado (F1)" onClick={() => setShortcutsOpen(true)}><Icon name="help" size={20} /></button>
+      </nav>
+      {collection && <div className="library-workspace" hidden={workspace !== 'library'}>
+        {sidebarOpen && <><aside className="sidebar" style={{ width: sidebar.width }} aria-label="Explorador">
+          <div className="sidebar-head"><span>{caps.activeId ? kindLabel(caps.kind) : 'Biblioteca'}</span><span className="spacer" />{caps.refresh && <button className="icon-button" aria-label="Actualizar" title="Actualizar (Alt+R)" disabled={busy} onClick={refresh}><Icon name="refresh" size={14} /></button>}<button className="icon-button" aria-label="Ocultar barra lateral" title="Ocultar barra lateral (Ctrl+B)" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" size={14} /></button></div>
+          <FilterBar query={query} filters={filters} options={options} onQuery={changeQuery} onFilters={changeFilters} searchRef={searchInput} openSignal={filterSignal} />
+          <div className="side-tabs" role="tablist"><button role="tab" aria-selected={sideView === 'tree'} onClick={() => setSideView('tree')}>Explorador</button><button role="tab" aria-selected={sideView === 'results'} onClick={() => setSideView('results')}>Resultados <span className="count">{search.total}</span></button>{editing && caps.write && <><span className="spacer" /><button className="icon-button" title="Nuevo archivo" aria-label="Nuevo archivo" onClick={() => startOperation('file', reference?.path || scope)}>+</button></>}</div>
+          {sideView === 'tree' ? <FolderTree key={caps.activeId || 'root'} collection={collection} scope={scope} busy={busy} mode={mode} selected={selectedPath} collapseSignal={collapseSignal} onFolder={path => { changeScope(path); }} onFile={path => { if (!editing) setMode('editing'); void openFile(path); }} onReference={path => { const ref = referenceMap.get(path); if (ref) void select(ref); }} onContext={treeContext} /> : resultsList}
+          {!!collection.warnings.length && editing && <details className="collection-warnings"><summary>Advertencias ({collection.warnings.length})</summary>{collection.warnings.map((warning, index) => <p className="warning" key={index}>{warning}</p>)}</details>}
+        </aside><div className="resizer" role="separator" aria-orientation="vertical" aria-label="Redimensionar barra lateral" tabIndex={0} onPointerDown={sidebar.start} onKeyDown={sidebar.keyboard} /></>}
+        <section className="content" aria-label="Contenido">
+          {editing ? <div className="editing-layout">{editorPane}{infoOpen && propertiesPane && <><div className="resizer" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de propiedades" tabIndex={0} onPointerDown={info.start} onKeyDown={info.keyboard} /><div className="side-panel" style={{ width: info.width }}>{propertiesPane}</div></>}</div>
+            : reference ? <ReadingView reference={reference} collection={collection} infoOpen={infoOpen} busy={busy} practiced={practiced} externalLabel={externalLabel} onTogglePractice={togglePractice} onOpenReference={select} onNotice={setNotice} onPrint={() => printReference()} />
+            : <div className="home"><h1>{scope || 'Toda la colección'}</h1><p className="muted">{collection.references.length} referencias. Elige una en el explorador o en la lista.</p>{resultsList}</div>}
+        </section>
+      </div>}
+      <div className="document-panel" hidden={workspace !== 'document'}>{documentOpened && collection && <Suspense fallback={<p>Abriendo el generador de documentos…</p>}><DocumentWorkspace key={(caps.activeId || 'root') + (printSelection?.n || '')} collection={collection} busy={busy} onBusy={setBusy} initialSelection={printSelection?.paths} /></Suspense>}</div>
+      <div className="libraries-workspace" hidden={workspace !== 'libraries'}><LibrariesPanel busy={busy} onBusy={setBusy} onOpen={openLibrary} onSnapshot={snapshotChosen} onNotice={setNotice} /></div>
+      {!collection && workspace !== 'libraries' && <section className="welcome"><h2>Tu colección, en tus archivos</h2><p>Organiza algoritmos, soluciones y apuntes sin una estructura obligatoria ni una base de datos propietaria.</p><p>Conecta un repositorio de GitHub, una carpeta local o usa la colección de ejemplos. El modo lectura muestra explicaciones, código y visualizaciones; el modo edición da acceso a todos los archivos.</p><div className="actions"><button className="primary" onClick={openExamples}>Abrir ejemplos</button><button onClick={() => setWorkspace('libraries')}>Conectar una biblioteca</button></div></section>}
+    </div>
+    <footer className="statusbar"><span className="status" role="status" aria-live="polite">{busy ? 'Procesando… ' : ''}{notice}</span><span className="spacer" />{has && <><span>{editing ? 'Edición' : 'Lectura'}</span><span>{collection!.references.length} referencias · {collection!.entries.length} elementos</span><span>{caps.write ? 'Editable' : 'Solo lectura'}</span>{dirty && <span className="warning">{dirtyFiles.length} sin guardar</span>}</>}</footer>
+    {context && <ContextMenu {...context} onClose={() => setContext(undefined)} />}
+    <dialog className="management-dialog" ref={modal} aria-label="Gestionar archivos" onCancel={() => { if (!busy) setOperation(undefined); }} onKeyDown={event => { if (busy && event.key === 'Escape') event.preventDefault(); }}><form onSubmit={submitOperation}><h2>{operation ? operationTitles[operation] : ''}</h2>{operation === 'rename' && <p>Origen: {operationSource}</p>}<label>Ruta relativa a la biblioteca<input autoFocus required value={destination} onChange={event => setDestination(event.target.value)} placeholder={operation === 'file' ? 'temas/grafos/bfs/explicacion.md' : 'temas/grafos/mi-referencia'} /></label><p className="muted">La carpeta padre debe existir. No se sobrescriben destinos existentes.{operation === 'file' ? ' Nombres reconocidos: explicacion.md, intuicion.md, correctitud.md, complejidad.md, ejemplos.md, variantes.md…' : ''}</p><p role="status">{notice}</p><button className="primary" disabled={busy} type="submit">Confirmar</button><button disabled={busy} type="button" onClick={() => setOperation(undefined)}>Cancelar</button></form></dialog>
+    <dialog className="management-dialog shortcuts" ref={shortcutsModal} aria-label="Atajos de teclado" onClose={() => setShortcutsOpen(false)}><h2>Atajos de teclado</h2><table><tbody>{[['Ctrl+K', 'Buscar referencias'], ['Ctrl+Shift+F', 'Filtros'], ['Ctrl+B', 'Mostrar u ocultar la barra lateral'], ['Alt+I', 'Panel de información'], ['Alt+M', 'Cambiar entre lectura y edición'], ['Ctrl+S', 'Guardar el archivo activo'], ['Alt+W', 'Cerrar la pestaña activa'], ['Alt+N', 'Nueva referencia'], ['F2', 'Mover o renombrar'], ['Alt+R', 'Actualizar la biblioteca'], ['Ctrl+P', 'Imprimir la referencia actual'], ['Ctrl+Shift+P', 'Generador de documentos'], ['↑ ↓ ← → Enter', 'Navegar el árbol'], ['← → Espacio', 'Controlar una visualización enfocada']].map(([keys, label]) => <tr key={keys}><td><kbd>{keys}</kbd></td><td>{label}</td></tr>)}</tbody></table><form method="dialog"><button className="primary">Cerrar</button></form></dialog>
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

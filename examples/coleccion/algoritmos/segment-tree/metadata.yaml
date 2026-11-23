@@ -1,0 +1,17 @@
+schema_version: 1
+title: Segment Tree
+subtitle: Consultas de intervalo y actualizaciones puntuales en O(log n)
+description: Árbol binario sobre el arreglo donde cada nodo guarda la combinación (suma, mínimo, máximo…) de un intervalo.
+category: algoritmos
+platform: Genérico
+tags: [Segment Tree, estructuras de datos, consultas de rango]
+language: C++
+complexity:
+  time: O(n) construcción · O(log n) consulta y actualización
+  space: O(4n)
+visualizations:
+  - type: segment-tree
+    title: Segment Tree de suma paso a paso
+    values: [5, 8, 6, 3, 2, 7, 2, 6]
+    operation: sum
+related: [algoritmos/dsu]

@@ -106,6 +106,12 @@ export class NodeFsProvider implements LibraryProvider {
     catch (error) { throw (error as NodeJS.ErrnoException).code === 'EEXIST' ? new Error('Ya existe un archivo o carpeta con ese nombre.') : error; }
   }
 
+  async remove(relative: string): Promise<void> {
+    await this.checkRoot();
+    await this.checkPath(relative);
+    await fs.rm(this.resolve(relative), { recursive: true });
+  }
+
   async rename(from: string, to: string): Promise<void> {
     await this.checkRoot();
     const source = this.resolve(from), target = this.resolve(to);
