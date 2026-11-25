@@ -21,11 +21,25 @@ test('clasifica secciones por nombre, oculta auxiliares y ordena la explicación
   assert.deepEqual(model.complexity, { time: 'O(log n)', space: 'O(n)', notes: undefined });
 });
 
-test('detecta visualizaciones declaradas o por título y permite desactivarlas', () => {
-  assert.deepEqual(readingVisualizations(reference('x/segment-tree', ['x/segment-tree/a.cpp'])), [{ type: 'segment-tree', options: {} }]);
-  assert.deepEqual(readingVisualizations(reference('x', [], { visualizations: [{ type: 'segment-tree', values: [1, 2, 'x'], operation: 'min' }] })), [{ type: 'segment-tree', title: undefined, options: { values: [1, 2, 'x'], operation: 'min' } }]);
-  assert.deepEqual(readingVisualizations(reference('segment-tree', [], { visualizations: false })), []);
-  assert.ok(buildReadingModel(reference('st', ['st/a.cpp'], { visualizations: ['segment-tree'] })).tabs.some(tab => tab.id === 'visualization'));
+test('las visualizaciones vienen de los archivos .viz.js de la referencia', () => {
+  const files = ['st/st.cpp', 'st/segment-tree.viz.js', 'st/segment-tree.viz.css', 'st/otra.viz.js'];
+  assert.deepEqual(readingVisualizations(reference('st', files)), [
+    { file: 'st/segment-tree.viz.js', css: 'st/segment-tree.viz.css', options: {} },
+    { file: 'st/otra.viz.js', css: undefined, options: {} }
+  ]);
+  // metadata.yaml elige orden, título y datos; `type` equivale a `<type>.viz.js`.
+  assert.deepEqual(readingVisualizations(reference('st', files, { visualizations: [{ type: 'otra', title: 'Otra', values: [1, 2] }, 'segment-tree'] })), [
+    { file: 'st/otra.viz.js', css: undefined, title: 'Otra', options: { values: [1, 2] } },
+    { file: 'st/segment-tree.viz.js', css: 'st/segment-tree.viz.css', options: {} }
+  ]);
+  assert.deepEqual(readingVisualizations(reference('st', files, { visualizations: [{ file: './segment-tree.viz.js', operation: 'min' }] }))[0], { file: 'st/segment-tree.viz.js', css: 'st/segment-tree.viz.css', title: undefined, options: { operation: 'min' } });
+  assert.deepEqual(readingVisualizations(reference('st', files, { visualizations: false })), []);
+  // Sin archivo .viz.js no hay visualización, aunque el nombre coincida con un algoritmo conocido.
+  assert.deepEqual(readingVisualizations(reference('x/segment-tree', ['x/segment-tree/a.cpp'])), []);
+  const model = buildReadingModel(reference('st', files));
+  assert.deepEqual(model.tabs.map(tab => tab.id), ['code', 'visualization']);
+  assert.deepEqual(model.tabs[0].sections.map(section => section.file), ['st/st.cpp']);
+  assert.ok(model.hidden.includes('st/segment-tree.viz.css'));
 });
 
 

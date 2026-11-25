@@ -5,8 +5,6 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import katex from 'katex';
 import { buildReadingModel, readingVisualizations } from '../../shared/reading.js';
-import { visualizations } from '../../visualizations/index.js';
-import { inputFromSpec } from '../../visualizations/core/engine.js';
 import hljs from 'highlight.js/lib/common';
 import { z } from 'zod';
 import { canonicalPath, documentSettingsSchema, metadataLabels, type DocumentRequest, type DocumentSettings } from '../../shared/document.js';
@@ -19,7 +17,9 @@ export interface DocumentSource {
   read(path: string): Promise<TextFile>;
 }
 
-export type DocumentBlock = { html: string; keepNext?: boolean; pageBreak?: boolean };
+/** `visualization`: el hilo principal sustituye el bloque por la imagen SVG que genera el archivo `*.viz.js` en su entorno aislado. */
+export type DocumentVisualization = { file: string; title?: string; code: string; css?: string; options: Record<string, unknown> };
+export type DocumentBlock = { html: string; keepNext?: boolean; pageBreak?: boolean; visualization?: DocumentVisualization };
 export type DocumentModel = { settings: DocumentSettings; blocks: DocumentBlock[]; warnings: string[] };
 export const escapeHtml = (value: string) => value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
 const requestSchema = z.object({ selected: z.array(z.string().max(4096)).min(1).max(500), settings: documentSettingsSchema }).strict();
@@ -133,12 +133,10 @@ export async function buildDocumentModel(service: DocumentSource, input: Documen
       }
       if (!reference.code.length && settings.code) blocks.push({ html: '<p class="missing">Esta referencia no contiene archivos de código.</p>' });
       if (settings.visualizations !== false) for (const spec of readingVisualizations(reference)) {
-        const definition = visualizations.get(spec.type);
-        if (!definition?.staticSvg) continue;
-        const { values, warning } = inputFromSpec(definition, spec);
-        if (warning) warnings.push(`${reference.path}: ${warning}`);
-        const figure = definition.staticSvg(definition.parseInput(values));
-        blocks.push({ html: `<figure class="visualization">${figure.svg}<figcaption>${escapeHtml([spec.title || definition.title, figure.caption].filter(Boolean).join(' · '))}</figcaption></figure>` });
+        try {
+          const code = await snapshot(spec.file), css = spec.css ? await snapshot(spec.css) : undefined;
+          blocks.push({ html: '', visualization: { file: spec.file, title: spec.title, code, css, options: spec.options } });
+        } catch (error) { warnings.push(`${spec.file}: no se pudo leer la visualización (${(error as Error).message}).`); }
       }
     }
     const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));

@@ -17,7 +17,7 @@ export function serve(dir, base = '/ReferenceManager/') {
     const file = path.join(dir, relative);
     try {
       const content = await fs.readFile(file);
-      res.writeHead(200, { 'content-type': types[path.extname(file).toLowerCase()] || 'application/octet-stream' });
+      res.writeHead(200, { 'content-type': types[path.extname(file).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': '*' });
       res.end(content);
     } catch {
       try {

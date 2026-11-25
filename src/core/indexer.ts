@@ -1,7 +1,7 @@
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 import type { Collection, Metadata, Reference, TextFile } from '../shared/types.js';
-import { codeExtensions, textExtensions, extensionOf, isMetadataFile, isIgnoredName, isRepositoryDocument, isReferenceResourceFolder, isEditableFile, assetExtensions, collator } from '../shared/formats.js';
+import { codeExtensions, textExtensions, extensionOf, isMetadataFile, isIgnoredName, isRepositoryDocument, isReferenceResourceFolder, isEditableFile, assetExtensions, collator, isVisualizationAsset } from '../shared/formats.js';
 import {
   ignoredDirectories, textLimit, metadataLimit, indexLimit, entryLimit,
   normalizeRelative, joinRelative, parentOf, baseName, sha256Hex,
@@ -137,7 +137,7 @@ export class LibraryIndexer {
       const files = [...children.filter(entry => !entry.directory).map(entry => entry.path), ...(attached.get(directory) || []).sort((a, b) => collator.compare(a, b))];
       const metadataFiles = files.filter(file => parentOf(file) === directory && isMetadataFile(file)).sort((a, b) => Number(extensionOf(a) !== '.yaml') - Number(extensionOf(b) !== '.yaml'));
       const metadataFile = metadataFiles[0];
-      const code = files.filter(file => codeExtensions.has(extensionOf(file)));
+      const code = files.filter(file => codeExtensions.has(extensionOf(file)) && !isVisualizationAsset(file));
       const notes = files.filter(file => ['.md', '.txt'].includes(extensionOf(file)));
       if (!qualifies.get(directory)) continue;
       const warnings: string[] = [];
@@ -170,7 +170,7 @@ export class LibraryIndexer {
           if (parentOf(candidate) !== directory || !actual || !sizes.has(actual)) warnings.push(`Archivo declarado no disponible directamente en esta carpeta: ${declared}`);
           else selected.push(actual);
         }
-        selected = [...new Set([...selected, ...notes, ...metadataFiles, ...(attached.get(directory) || [])])];
+        selected = [...new Set([...selected, ...notes, ...metadataFiles, ...files.filter(file => isVisualizationAsset(file) && sizes.has(file)), ...(attached.get(directory) || [])])];
       }
       if (metadata.notes) {
         const candidate = joinRelative(directory, metadata.notes);
@@ -179,7 +179,7 @@ export class LibraryIndexer {
       let searchText = normalize(`${directory} ${files.join(' ')} ${JSON.stringify(metadata)}`).slice(0, available);
       let partial = available === 0;
       for (const file of files) {
-        if (!textExtensions.has(extensionOf(file))) continue;
+        if (!textExtensions.has(extensionOf(file)) || isVisualizationAsset(file)) continue;
         if (searchText.length >= available) { partial = true; continue; }
         try {
           const text = file === metadataFile ? metadataContent : (await this.read(file)).content;

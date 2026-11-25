@@ -1,7 +1,6 @@
 import type { Reference } from './types.js';
-import { visualizations as visualizationRegistry } from '../visualizations/index.js';
 import type { VisualizationSpec } from '../visualizations/core/types.js';
-import { codeExtensions, extensionOf, isMetadataFile, isRepositoryDocument, assetExtensions } from './formats.js';
+import { codeExtensions, extensionOf, isMetadataFile, isRepositoryDocument, assetExtensions, isVisualizationAsset, isVisualizationFile } from './formats.js';
 
 export type ReadingTabId = 'explanation' | 'code' | 'visualization' | 'examples' | 'complexity';
 export type ReadingSection = { file: string; kind: string; label: string };
@@ -66,23 +65,37 @@ export function readingComplexity(reference: Reference) {
   return {};
 }
 
-/** Visualizaciones de una referencia: las declaradas en `visualizations` o, si no hay, las registradas cuyo alias aparece en el título, la carpeta o las etiquetas. */
+/**
+ * Visualizaciones de una referencia: sus archivos `*.viz.js`. Las entradas de `visualizations` en `metadata.yaml`
+ * eligen el orden, el título y los datos iniciales (`file` o `type` → `<type>.viz.js`); `visualizations: false` las oculta.
+ */
 export function readingVisualizations(reference: Reference): VisualizationSpec[] {
   const declared = reference.metadata.visualizations ?? reference.metadata.visualizaciones;
-  if (Array.isArray(declared)) {
-    const specs: VisualizationSpec[] = [];
-    for (const item of declared) {
-      if (typeof item === 'string' && item.trim()) specs.push({ type: item.trim().toLowerCase(), options: {} });
-      else if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).type === 'string') {
-        const { type, title, ...options } = item as Record<string, unknown>;
-        specs.push({ type: String(type).trim().toLowerCase(), title: asText(title), options });
-      }
-    }
-    return specs;
-  }
   if (declared === false) return [];
-  const text = `${reference.title} ${reference.path.split('/').pop() || ''} ${(reference.metadata.tags || []).join(' ')}`;
-  return visualizationRegistry.match(text).map(definition => ({ type: definition.id, options: {} }));
+  const prefix = reference.path ? reference.path + '/' : '';
+  const files = reference.files.filter(isVisualizationFile);
+  const css = (file: string) => { const sheet = file.replace(/\.viz\.m?js$/i, '.viz.css'); return reference.files.includes(sheet) ? sheet : undefined; };
+  const resolve = (name: string) => {
+    const relative = name.trim().replace(/^\.\//, '');
+    const candidates = isVisualizationFile(relative) ? [relative] : [`${relative}.viz.js`, `${relative}.viz.mjs`];
+    const exact = candidates.map(item => prefix + item).find(item => files.includes(item));
+    if (exact) return exact;
+    const base = candidates[0].split('/').pop()!.toLowerCase();
+    return files.find(item => item.split('/').pop()!.toLowerCase() === base) || prefix + candidates[0];
+  };
+  const specs: VisualizationSpec[] = [];
+  for (const item of Array.isArray(declared) ? declared : []) {
+    let spec: VisualizationSpec | undefined;
+    if (typeof item === 'string' && item.trim()) spec = { file: resolve(item), options: {} };
+    else if (item && typeof item === 'object') {
+      const { file, type, title, ...options } = item as Record<string, unknown>;
+      const name = typeof file === 'string' ? file : typeof type === 'string' ? type : undefined;
+      if (name?.trim()) spec = { file: resolve(name), title: asText(title), options };
+    }
+    if (spec && !specs.some(other => other.file === spec!.file)) specs.push({ ...spec, css: css(spec.file) });
+  }
+  for (const file of files) if (!specs.some(spec => spec.file === file)) specs.push({ file, css: css(file), options: {} });
+  return specs;
 }
 
 export function buildReadingModel(reference: Reference): ReadingModel {
@@ -93,7 +106,7 @@ export function buildReadingModel(reference: Reference): ReadingModel {
   const declaredDocs = (Array.isArray(reference.metadata.docs) ? reference.metadata.docs : []).filter((item): item is string => typeof item === 'string').map(item => (reference.path ? reference.path + '/' : '') + item.replace(/^\.\//, ''));
   for (const file of reference.files) {
     const extension = extensionOf(file);
-    if (isAuxiliaryFile(file)) { hidden.push(file); continue; }
+    if (isAuxiliaryFile(file) || isVisualizationAsset(file)) { hidden.push(file); continue; }
     visible.push(file);
     if (codeExtensions.has(extension)) {
       const section = sectionOf(file, reference);

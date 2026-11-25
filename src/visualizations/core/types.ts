@@ -1,13 +1,21 @@
-// Contrato común de las visualizaciones. Este archivo no depende de React ni del DOM:
-// lo usan la interfaz, el generador de documentos (worker) y las pruebas.
+// Contrato entre el motor de visualizaciones (esta aplicación) y los archivos `*.viz.js` de cada referencia.
+// No depende de React ni del DOM: lo usan la interfaz, el entorno aislado, el generador de documentos y las pruebas.
 
-/** Declaración de una visualización en `metadata.yaml` (`visualizations: [...]`). */
-export type VisualizationSpec = { type: string; title?: string; options: Record<string, unknown> };
+/** Visualización de una referencia: el archivo `*.viz.js` y las opciones declaradas en `metadata.yaml`. */
+export type VisualizationSpec = {
+  /** Ruta completa del archivo `*.viz.js` dentro de la biblioteca. */
+  file: string;
+  /** Hoja de estilos opcional junto al archivo (`<nombre>.viz.css`). */
+  css?: string;
+  title?: string;
+  /** Todo lo declarado en `metadata.yaml` salvo `file` y `title` (por ejemplo `values`, `operation`). */
+  options: Record<string, unknown>;
+};
 
 export type FieldValue = string | number;
 export type FieldValues = Record<string, FieldValue>;
 
-/** Campo de formulario que el contenedor dibuja por ti. */
+/** Campo de formulario que el motor dibuja. */
 export type Field = {
   name: string;
   label: string;
@@ -19,18 +27,15 @@ export type Field = {
   options?: { value: string; label: string }[];
 };
 
-/** Lo que emite el algoritmo. `type` es obligatorio; el resto de claves las define cada algoritmo. */
+/** Lo que emite el algoritmo. `type` es obligatorio; el resto de claves las define cada visualización. */
 export type ExecutionEvent = { type: string; [key: string]: unknown };
 
-/**
- * Un paso de la animación. `state` es el estado completo que necesita el dibujo en ese instante
- * (datos planos serializables a JSON); cada visualización define su forma.
- */
+/** Un paso de la animación. `state` es el estado completo que necesita el dibujo (datos planos, serializables). */
 export type Step<State = unknown> = {
   state: State;
   /** Explicación del paso, en texto plano. */
   message: string;
-  /** Evento del algoritmo que produjo el paso (opcional, útil para depurar). */
+  /** Evento del algoritmo que produjo el paso (opcional, se ve en «Datos del paso»). */
   event?: ExecutionEvent;
   /** Resultado parcial o final que se muestra junto a la explicación (opcional). */
   result?: string;
@@ -48,13 +53,25 @@ export type Operation = {
 /** Entrada de la leyenda. `state` es una clase CSS: active, visited, used, skipped, range o una propia. */
 export type LegendItem = { state: string; label: string };
 
+/** Datos del dibujo de un paso. */
+export type RenderContext<State = any, Input = any> = {
+  previous?: Step<State>;
+  next?: Step<State>;
+  index: number;
+  total: number;
+  input: Input;
+  operation: string;
+  /** Duración de un paso en milisegundos con la velocidad actual. */
+  durationMs: number;
+  theme: 'dark' | 'light';
+  /** `true` al generar la imagen estática para un documento impreso. */
+  print: boolean;
+};
+
+/** Lo que devuelve la función exportada por un archivo `*.viz.js`. */
 export type VisualizationDefinition<Input = any, State = any> = {
-  /** Identificador único en kebab-case; es el `type` que se escribe en `metadata.yaml`. */
-  id: string;
   title: string;
-  description: string;
-  /** Palabras que activan la visualización si aparecen en el título, la carpeta o las etiquetas de una referencia. */
-  aliases?: string[];
+  description?: string;
   /** Datos de entrada (arreglo inicial, tamaño…). */
   inputs: Field[];
   /** Operaciones disponibles; la primera se ejecuta al abrir. Debe haber al menos una. */
@@ -67,21 +84,12 @@ export type VisualizationDefinition<Input = any, State = any> = {
   /** Ejecuta el algoritmo y devuelve los pasos (al menos uno). Lanza `Error` si los parámetros no son válidos. */
   run(input: Input, operation: string, params: FieldValues): Step<State>[];
   /** Devuelve los nuevos valores de `inputs` tras conservar el efecto de una operación con `commitLabel`. */
-  commit?(input: Input, operation: string, params: FieldValues): FieldValues;
-  /** Imagen estática para el generador de documentos. */
-  staticSvg?(input: Input): { svg: string; caption?: string };
+  commit?(input: Input, operation: string, params: FieldValues): Partial<FieldValues>;
+  /** Dibuja un paso. Devuelve SVG o HTML como texto (o el resultado de `viz.h`). */
+  render(step: Step<State>, context: RenderContext<State, Input>): unknown;
+  /** Operación cuyo último paso se imprime en los documentos; por defecto, la primera. `false` no la imprime. */
+  print?: { operation?: string } | false;
 };
 
-/** Propiedades que recibe el componente de dibujo (`renderer.tsx`). */
-export type RendererProps<State = any, Input = any> = {
-  step: Step<State>;
-  previous?: Step<State>;
-  next?: Step<State>;
-  index: number;
-  total: number;
-  playing: boolean;
-  /** Duración de un paso en milisegundos con la velocidad actual. */
-  durationMs: number;
-  input: Input;
-  operation: string;
-};
+/** Datos de la definición que el entorno aislado envía al motor (sin funciones). */
+export type VisualizationMeta = Pick<VisualizationDefinition, 'title' | 'description' | 'inputs' | 'operations' | 'legend'> & { commit: boolean };

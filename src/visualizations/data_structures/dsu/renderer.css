@@ -1,3 +1,0 @@
-/* La arista recién cambiada (compresión o unión) se resalta. */
-.viz-edge.dsu-changed{stroke:var(--viz-active-stroke);stroke-width:2.6;stroke-dasharray:5 3}
-.viz-dsu .viz-array div{min-width:58px}
