@@ -1,132 +1,109 @@
 # Guía de visualizaciones
 
-Cómo funciona el sistema de visualizaciones de ReferenceManager y cómo añadir o modificar una.
+ReferenceManager tiene un **motor** de visualizaciones, pero ninguna visualización propia: cada referencia trae la suya en un archivo `<nombre>.viz.js` junto a su código. Esta guía explica el formato de ese archivo y cómo funciona el motor.
 
 - [1. Arquitectura](#1-arquitectura)
-- [2. El contrato](#2-el-contrato)
-- [3. Tutorial: crear una visualización (Fenwick Tree)](#3-tutorial-crear-una-visualización-fenwick-tree)
-- [4. Dibujo](#4-dibujo)
-- [5. Animación y reproductor](#5-animación-y-reproductor)
-- [6. Depuración](#6-depuración)
-- [7. Recetas para otros algoritmos](#7-recetas-para-otros-algoritmos)
-- [8. Pruebas](#8-pruebas)
-- [9. Lista de comprobación](#9-lista-de-comprobación)
+- [2. Dónde va el archivo](#2-dónde-va-el-archivo)
+- [3. El contrato](#3-el-contrato)
+- [4. Tutorial: Fenwick Tree](#4-tutorial-fenwick-tree)
+- [5. Dibujo](#5-dibujo)
+- [6. Animación y reproductor](#6-animación-y-reproductor)
+- [7. Impresión](#7-impresión)
+- [8. Depuración](#8-depuración)
+- [9. Recetas para otros algoritmos](#9-recetas-para-otros-algoritmos)
+- [10. Pruebas](#10-pruebas)
+- [11. Seguridad](#11-seguridad)
+- [12. Lista de comprobación](#12-lista-de-comprobación)
 
 ## 1. Arquitectura
 
 ```text
-src/visualizations/
-├── index.ts                  ← registro central de definiciones (sin React)
-├── renderers.ts              ← registro central de dibujos (carga diferida)
-├── core/                     ← núcleo común; no conoce ningún algoritmo
-│   ├── types.ts              ← el contrato: VisualizationDefinition, Step, RendererProps…
-│   ├── registry.ts           ← createRegistry(): register, unregister, get, has, list, match
-│   ├── engine.ts             ← execute(), validateSteps(), playerReducer(), inputFromSpec()
-│   ├── utils.ts              ← parseIntegers, integerParam, interval, layoutForest, escapeXml
-│   ├── player.tsx            ← useStepPlayer + botones del reproductor
-│   ├── VisualizationHost.tsx ← formulario, ejecución, reproductor, explicación, leyenda, errores
-│   ├── VisualizationGallery.tsx ← Herramientas → Galería de visualizaciones
-│   └── visualization.css     ← estilos y clases de estado comunes
-└── data_structures/          ← una carpeta por visualización (crea graphs/, dynamic_programming/… cuando hagan falta)
-    ├── segment_tree/
-    ├── fenwick_tree/
-    └── dsu/
-        ├── algorithm.ts      ← el algoritmo puro; emite eventos
-        ├── visualization.ts  ← la definición: formulario + eventos → pasos
-        ├── renderer.tsx      ← dibuja UN paso
-        ├── renderer.css      ← estilos propios (opcional)
-        └── README.md
+Referencia (tu biblioteca)              ReferenceManager (esta aplicación)
+algoritmos/fenwick-tree/                src/visualizations/
+├── fenwick_tree.cpp                    ├── core/
+├── explicacion.md                      │   ├── types.ts              ← contrato que cumple el .viz.js
+├── metadata.yaml   ← título y datos    │   ├── engine.ts             ← validación, ejecución, reproductor
+├── fenwick-tree.viz.js ← algoritmo,    │   ├── utils.ts              ← utilidades `viz` (h, arrayCells, layoutForest…)
+│                     pasos y dibujo    │   ├── sandbox-client.ts     ← crea el iframe aislado y habla con él
+└── fenwick-tree.viz.css (opcional)     │   ├── VisualizationHost.tsx ← formulario, reproductor, explicación, leyenda
+                                        │   └── player.tsx
+                                        └── sandbox/
+                                            ├── runtime.ts            ← corre dentro del iframe (viz-sandbox.html)
+                                            └── styles.ts             ← clases de estado comunes
 ```
 
-### Flujo de datos
+Flujo de datos:
 
 ```text
-algorithm.ts          visualization.ts            core                   renderer.tsx
-Algoritmo  ──eventos──▶ run(): eventos → pasos ──▶ VisualizationHost ──▶ dibuja step.state
-(sin UI)               (estado propio, sin React)  (reproductor, UI)     (sin lógica del algoritmo)
+fenwick-tree.viz.js                                   motor
+algoritmo ──eventos──▶ run(): eventos → pasos ──▶ reproductor, explicación, leyenda
+                       render(paso) → SVG     ◀── «dibuja el paso i»
 ```
 
-1. **El algoritmo** (`algorithm.ts`) es una clase o función normal. Funciona sola (`new FenwickTree(a).prefix(3)`) y, si recibe una función `trace`, le avisa de cada cosa que hace con un **evento** (`{ type: 'prefix:take', node: 6, value: 9 }`).
-2. **La definición** (`visualization.ts`) ejecuta el algoritmo, escucha los eventos y guarda una **instantánea del estado** por cada uno: eso es un **paso**. Aquí se decide qué se muestra y qué texto lo explica. No usa React ni el DOM, así que también corre en el worker que genera los documentos y en los tests.
-3. **El núcleo** (`VisualizationHost`) construye el formulario a partir de la definición, llama a `run`, valida los pasos y se encarga del reproductor, el teclado, la explicación, la leyenda y los errores.
-4. **El dibujo** (`renderer.tsx`) recibe un paso y lo pinta. No calcula nada del algoritmo.
+1. **El algoritmo** es una clase o función normal escrita dentro del archivo. Si recibe una función `trace`, avisa con un **evento** de cada cosa que hace (`{ type: 'prefix:take', node: 6, value: 9 }`).
+2. **`run`** ejecuta el algoritmo, escucha los eventos y guarda una **instantánea del estado** por cada uno: eso es un **paso**, con su explicación.
+3. **`render`** recibe un paso y devuelve el SVG. No calcula nada del algoritmo.
+4. **El motor** dibuja el formulario a partir de la definición, llama a `run`, valida los pasos y maneja el reproductor, el teclado, la explicación, la leyenda, los errores y la impresión.
 
-Por eso retroceder es gratis: todos los pasos están calculados y cada uno es una instantánea completa; ir al paso anterior es solo dibujar `steps[i - 1]`.
+Retroceder es gratis: todos los pasos están calculados y cada uno es una instantánea completa; ir al paso anterior es dibujar `steps[i - 1]`.
 
-### Registro
+## 2. Dónde va el archivo
 
-Hay dos puntos centrales, y son los **únicos** archivos fuera de tu carpeta que tocas al añadir una visualización:
+- En la **carpeta de la referencia, junto al código**: `algoritmos/fenwick-tree/fenwick-tree.viz.js`.
+- La extensión `.viz.js` (o `.viz.mjs`) lo distingue del código: no aparece en la pestaña Código, no cuenta como lenguaje de la referencia y no entra en la búsqueda. En modo Edición se ve y se edita como cualquier archivo.
+- Estilos propios opcionales: `<mismo nombre>.viz.css`.
+- Una referencia puede tener varias visualizaciones; cada archivo `.viz.js` es una.
 
-```ts
-// src/visualizations/index.ts — definiciones (puro)
-visualizations.register(fenwickTree);
+`metadata.yaml` es opcional y elige el título, el orden y los datos iniciales:
 
-// src/visualizations/renderers.ts — dibujos (React, carga diferida)
-'fenwick-tree': () => import('./data_structures/fenwick_tree/renderer.js'),
+```yaml
+visualizations:
+  - file: fenwick-tree.viz.js      # o «type: fenwick-tree», equivalente a fenwick-tree.viz.js
+    title: Fenwick Tree paso a paso
+    values: [3, 2, -1, 6, 5, 4, -3, 3]   # todo lo demás se pasa a inputFromSpec
 ```
 
-Están separados porque las definiciones se usan también fuera de la interfaz (documentos, tests), donde React no existe. El dibujo se descarga solo cuando se abre esa visualización.
+- Sin `visualizations`, se muestran todos los `.viz.js` de la referencia con sus valores por defecto.
+- `visualizations: false` las oculta.
+- Si declaras `files:` en `metadata.yaml`, los `.viz.js` y `.viz.css` de la carpeta se incluyen igualmente.
 
-`visualizations` ofrece `register`, `unregister(id)`, `get(id)`, `has(id)`, `list()` y `match(texto)`. `register` rechaza identificadores repetidos, que no estén en `kebab-case` o definiciones sin operaciones.
+## 3. El contrato
 
-### Cómo llega una visualización a una referencia
+El archivo es un módulo ES sin compilación ni `import`. Exporta por defecto una función que recibe `viz` (las utilidades del motor) y devuelve la definición:
 
-- **Declarada** en `metadata.yaml`. Todo lo que no sea `type` o `title` se pasa a `inputFromSpec` como opciones:
-  ```yaml
-  visualizations:
-    - type: fenwick-tree
-      title: BIT del ejemplo
-      values: [3, 2, -1, 6]
-  ```
-- **Detectada**: si no se declara nada, se usan las visualizaciones cuyo `id` o alguno de sus `aliases` aparece como palabra completa en el título, la carpeta o las etiquetas (`registry.match`). `visualizations: false` lo desactiva.
-- **Galería**: *Herramientas → Galería de visualizaciones* muestra todas las registradas, sin necesidad de una referencia. Es la forma más rápida de probar la tuya.
+```js
+export default function (viz) {
+  return { title, inputs, operations, parseInput, run, render /* , opcionales */ };
+}
+```
 
-## 2. El contrato
-
-Todo está en [`core/types.ts`](../src/visualizations/core/types.ts).
-
-### `VisualizationDefinition<Input, State>`
+Tipos completos en [`src/visualizations/core/types.ts`](../src/visualizations/core/types.ts).
 
 | Miembro | ¿Obligatorio? | Para qué |
 | --- | --- | --- |
-| `id` | Sí | Identificador `kebab-case`; es el `type` de `metadata.yaml`. |
-| `title`, `description` | Sí | Textos que se muestran en la interfaz. |
-| `inputs: Field[]` | Sí (puede ser `[]`) | Campos de los datos iniciales (arreglo, grafo…). |
-| `operations: Operation[]` | Sí, al menos una | Acciones ejecutables y sus parámetros. |
-| `parseInput(values)` | Sí | Convierte y valida el formulario → `Input`. Lanza `Error` con un mensaje claro. |
-| `run(input, operation, params)` | Sí | Ejecuta el algoritmo y devuelve los pasos (`Step<State>[]`, al menos uno). |
-| `aliases` | No | Nombres para la detección automática. Evita palabras ambiguas. |
-| `legend` | No | Leyenda: `{ state, label }`; `state` es la clase CSS del color. |
-| `inputFromSpec(options)` | No | Traduce las opciones de `metadata.yaml` a valores del formulario. |
-| `commit(input, operation, params)` | No | Devuelve la entrada resultante de una operación que modifica los datos. Activa el botón `commitLabel`. |
-| `staticSvg(input)` | No | SVG estático para documentos impresos. Sin él, la visualización no se imprime. |
-
-`Input` y `State` son **tuyos**: el núcleo nunca mira dentro. Solo exige que cada paso tenga `state` y `message`.
-
-### `Field` y `Operation`
+| `title` | Sí | Nombre de la visualización. |
+| `description` | No | Texto bajo el título. |
+| `inputs: Field[]` | Sí (puede ser `[]`) | Campos de los datos iniciales (arreglo, tamaño…). |
+| `operations: Operation[]` | Sí, al menos una | Acciones ejecutables y sus parámetros. La primera se ejecuta al abrir. |
+| `parseInput(values)` | Sí | Convierte y valida el formulario. Lanza `Error` con un mensaje claro. |
+| `run(input, operation, params)` | Sí | Ejecuta el algoritmo y devuelve los pasos (al menos uno). |
+| `render(step, context)` | Sí | Devuelve el SVG del paso (texto o resultado de `viz.h`). |
+| `legend` | No | `{ state, label }[]`; `state` es la clase CSS del color. |
+| `inputFromSpec(options)` | No | Traduce las opciones de `metadata.yaml` a valores del formulario. Sin ella, las opciones se usan tal cual por nombre de campo. |
+| `commit(input, operation, params)` | No | Valores del formulario tras conservar una operación con `commitLabel`. |
+| `print` | No | `{ operation: 'id' }` elige qué operación se imprime; `false` no imprime. |
 
 ```ts
 type Field = { name: string; label: string; ariaLabel?: string; kind: 'text' | 'integer' | 'select'; default: string | number; options?: { value: string; label: string }[] };
 type Operation = { id: string; label: string; fields: Field[]; commitLabel?: string };
+type Step = { state: unknown; message: string; event?: { type: string; ... }; result?: string };
+type RenderContext = { previous?: Step; next?: Step; index: number; total: number; input: unknown; operation: string; durationMs: number; theme: 'dark' | 'light'; print: boolean };
 ```
 
-El núcleo dibuja un control por campo. Los campos `integer` vacíos o no enteros se rechazan antes de llamar a `run`.
-
-### `Step<State>`
-
-```ts
-type Step<State> = {
-  state: State;          // instantánea completa e independiente
-  message: string;       // explicación del paso
-  event?: ExecutionEvent; // el evento que lo originó (se ve en «Datos del paso»)
-  result?: string;       // texto destacado: «Acumulado: 9», «Resultado: 16»
-};
-```
-
-Ejemplos reales de estado, uno por visualización, para ver lo distintos que pueden ser:
+Los campos `integer` vacíos o no enteros se rechazan antes de llamar a `run`. El estado de cada paso es tuyo: el motor solo exige `state` y `message`. Ejemplos reales:
 
 ```jsonc
-// Segment Tree: árbol en arreglo + nodos por categoría
+// Segment Tree
 { "values": [null, 39, 22, 17], "array": [5, 8, 6, 3], "active": 5, "visited": [1, 2], "partial": [5], "skipped": [4], "highlight": [2, 5], "result": 9 }
 // Fenwick Tree
 { "array": [3, 2, -1, 6], "tree": [0, 3, 5, -1, 10], "active": 4, "used": [4], "highlight": [0, 3] }
@@ -134,49 +111,49 @@ Ejemplos reales de estado, uno por visualización, para ver lo distintos que pue
 { "parent": [0, 0, 0, 2], "size": [4, 1, 2, 1], "active": 2, "path": [3, 2], "roots": [], "changed": null }
 ```
 
-### `RendererProps<State, Input>`
+### Utilidades `viz`
 
-Lo que recibe el componente de dibujo:
-
-| Propiedad | Contenido |
+| Utilidad | Para qué |
 | --- | --- |
-| `step` | El paso a dibujar. Normalmente solo necesitas `step.state`. |
-| `previous`, `next` | Pasos vecinos (`undefined` en los extremos), para dibujar transiciones o diferencias. |
-| `index`, `total` | Posición del paso. |
-| `playing`, `durationMs` | Estado de la reproducción y duración de un paso a la velocidad actual. |
-| `input`, `operation` | La entrada validada y la operación ejecutada. |
+| `` viz.h`<svg>…${valor}…</svg>` `` | Plantilla segura: escapa cada valor interpolado; listas y otros `h` se insertan tal cual. |
+| `viz.raw(texto)` | Inserta texto sin escapar dentro de `h`. |
+| `viz.escape(texto)` | Escapa `& < > " '`. |
+| `viz.parseIntegers(texto, { max })` | `"1, 2 3"` → `[1, 2, 3]`; error legible si algo no es entero o hay más de `max`. |
+| `viz.integerParam(params, nombre, etiqueta, min, max)` | Lee un parámetro entero y comprueba su rango. |
+| `viz.interval(lo, hi)` | `[3]` o `[2, 5]`. |
+| `viz.numbersToText(opción)` | `values: [1, 2]` de `metadata.yaml` → `"1, 2"` para un campo de texto. |
+| `viz.arrayCells(valores, { x, y, cell, className, label })` | Fila de celdas SVG para un arreglo. |
+| `viz.layoutForest(parent)` | Posiciones `{ positions, width, height }` de un bosque dado como arreglo de padres. |
 
-## 3. Tutorial: crear una visualización (Fenwick Tree)
+## 4. Tutorial: Fenwick Tree
 
-El código de este tutorial es el que está en [`data_structures/fenwick_tree/`](../src/visualizations/data_structures/fenwick_tree/). Sigue los mismos pasos para cualquier otra.
+El código completo está en la referencia de ejemplo [`examples/coleccion/algoritmos/fenwick-tree/fenwick-tree.viz.js`](../examples/coleccion/algoritmos/fenwick-tree/fenwick-tree.viz.js). Los mismos pasos sirven para cualquier otra.
 
-### Paso 1 — Crea la carpeta
+### Paso 1. Crea el archivo junto al código
 
 ```text
-src/visualizations/data_structures/fenwick_tree/
+algoritmos/fenwick-tree/
+├── fenwick_tree.cpp
+└── fenwick-tree.viz.js
 ```
 
-### Paso 2 — `algorithm.ts`: el algoritmo y sus eventos
+```js
+export default function (viz) {
+  const { h, interval, parseIntegers, integerParam, numbersToText, arrayCells } = viz;
+  const lowbit = i => i & -i;
+  const coverage = node => [node - lowbit(node), node - 1];   // posiciones 0..n-1 que cubre el nodo
+  // … pasos 2 a 4 …
+}
+```
 
-Escribe el algoritmo como lo escribirías en un concurso y añade un `trace?.()` en cada punto que quieras poder mostrar. Declara los eventos como una unión para que TypeScript te avise si olvidas alguno.
+### Paso 2. El algoritmo y sus eventos
 
-```ts
-export type FenwickEvent =
-  | { type: 'prefix:start'; right: number }
-  | { type: 'prefix:take'; node: number; value: number; accumulated: number }
-  | { type: 'prefix:end'; right: number; result: number }
-  | { type: 'add:start'; index: number; delta: number }
-  | { type: 'add:node'; node: number; value: number }
-  | { type: 'add:end'; touched: number };
-  // … y los de construcción
+Escribe el algoritmo como en un concurso y añade un `this.trace?.(…)` en cada punto que quieras mostrar. Los eventos llevan **datos** (qué nodo, qué valor), no textos ni colores.
 
-export const lowbit = (i: number) => i & -i;
-
-export class FenwickTree {
-  readonly tree: number[];
-  trace?: (event: FenwickEvent) => void;
-
-  prefix(right: number): number {
+```js
+class FenwickTree {
+  constructor(array, trace) { /* construye y emite build:start, build:set, build:push, build:end */ }
+  prefix(right) {
     let sum = 0;
     this.trace?.({ type: 'prefix:start', right });
     for (let i = right + 1; i > 0; i -= lowbit(i)) {
@@ -189,35 +166,22 @@ export class FenwickTree {
 }
 ```
 
-Reglas: nada de React, nada de textos para el usuario, nada de colores. Los eventos llevan **datos** (qué nodo, qué valor), no decisiones de presentación. Sin `trace` la clase es un Fenwick Tree normal.
+Sin `trace`, la clase es un Fenwick Tree normal.
 
-### Paso 3 — `visualization.ts`: estado y eventos → pasos
+### Paso 3. Eventos → pasos
 
-Define el estado que necesita el dibujo:
+Un grabador mantiene un estado, lo actualiza con cada evento y guarda **una copia** como paso:
 
-```ts
-export type FenwickInput = { array: number[] };
-export type FenwickState = {
-  array: number[];
-  tree: (number | null)[];   // null = aún sin construir
-  active?: number;            // nodo actual
-  used: number[];             // nodos ya sumados o modificados
-  highlight: [number, number] | null; // posiciones del arreglo afectadas
-};
-```
-
-Luego un grabador: mantiene un estado mutable, lo actualiza con cada evento y guarda **una copia** como paso.
-
-```ts
+```js
 function record(array, tree, play) {
-  const state: FenwickState = { array: [...array], tree, used: [], highlight: null };
-  const steps: Step<FenwickState>[] = [];
-  const snapshot = (message, event, result?) =>
+  const state = { array: [...array], tree, active: undefined, used: [], highlight: null };
+  const steps = [];
+  const snapshot = (message, event, result) =>
     steps.push({ state: { ...state, array: [...state.array], tree: [...state.tree], used: [...state.used] }, message, event, result });
   play(event => {
     switch (event.type) {
-      case 'prefix:start': state.used = []; state.active = undefined; state.highlight = [0, event.right];
-        return snapshot(`Suma del prefijo ${interval(0, event.right)}: se empieza en el nodo ${event.right + 1}…`, event);
+      case 'prefix:start': state.used = []; state.highlight = [0, event.right];
+        return snapshot(`Suma del prefijo ${interval(0, event.right)}: se empieza en el nodo ${event.right + 1}.`, event);
       case 'prefix:take': state.active = event.node; state.used.push(event.node);
         return snapshot(`Nodo ${event.node} cubre ${interval(...coverage(event.node))}: aporta ${event.value}.`, event, `Acumulado: ${event.accumulated}`);
       // …
@@ -227,16 +191,14 @@ function record(array, tree, play) {
 }
 ```
 
-> **Copia siempre los arreglos en `snapshot`.** Si todos los pasos comparten el mismo arreglo, todos mostrarán el estado final y «paso anterior» parecerá no hacer nada.
+> **Copia los arreglos en `snapshot`.** Si todos los pasos comparten el mismo arreglo, todos muestran el estado final y «Paso anterior» parece no hacer nada.
 
-Por último, la definición:
+### Paso 4. La definición
 
-```ts
-export const fenwickTree: VisualizationDefinition<FenwickInput, FenwickState> = {
-  id: 'fenwick-tree',
+```js
+return {
   title: 'Fenwick Tree (BIT)',
   description: 'Sumas de prefijo y actualizaciones puntuales saltando con lowbit(i) = i & −i.',
-  aliases: ['fenwick', 'binary indexed tree', 'arbol binario indexado'],
   inputs: [{ name: 'values', label: 'Valores iniciales', kind: 'text', default: '3, 2, -1, 6, 5, 4, -3, 3' }],
   operations: [
     { id: 'build', label: 'Construcción', fields: [] },
@@ -247,14 +209,14 @@ export const fenwickTree: VisualizationDefinition<FenwickInput, FenwickState> = 
     ] }
   ],
   legend: [{ state: 'active', label: 'Nodo actual' }, { state: 'used', label: 'Sumado / modificado' }],
-  parseInput: values => ({ array: parseIntegers(String(values.values), { max: 16 }) }),
+  parseInput: values => ({ array: parseIntegers(values.values, { max: 16 }) }),
   inputFromSpec: options => ({ values: numbersToText(options.values) }),
   run({ array }, operation, params) {
     const n = array.length;
-    if (operation === 'build') return record(array, new Array(n + 1).fill(null), handle => { new FenwickTree(array, handle); });
-    const tree = new FenwickTree(array);             // se construye en silencio…
-    return record(array, [...tree.tree], handle => {
-      tree.trace = handle;                           // …y solo se graba la operación pedida
+    if (operation === 'build') return record(array, new Array(n + 1).fill(null), trace => { new FenwickTree(array, trace); });
+    const tree = new FenwickTree(array);          // se construye sin grabar…
+    return record(array, [...tree.tree], trace => {
+      tree.trace = trace;                         // …y solo se graba la operación pedida
       if (operation === 'prefix') tree.prefix(integerParam(params, 'right', 'r', 0, n - 1));
       else tree.add(integerParam(params, 'index', 'La posición', 0, n - 1), integerParam(params, 'delta', 'La cantidad', -1e9, 1e9));
     });
@@ -263,252 +225,161 @@ export const fenwickTree: VisualizationDefinition<FenwickInput, FenwickState> = 
     const next = [...array];
     if (operation === 'add') next[Number(params.index)] += Number(params.delta);
     return { values: next.join(', ') };
-  }
+  },
+  render(step) { /* paso 5 */ }
 };
 ```
 
-Valida en `parseInput` y con `integerParam` (comprueba entero y rango); cualquier `Error` que lances se muestra al usuario como aviso y la vista sigue funcionando. Pon un tamaño máximo razonable: un dibujo con 500 nodos no enseña nada.
+Valida en `parseInput` y con `integerParam`. Cualquier `Error` que lances se muestra como aviso y la vista sigue funcionando. Limita el tamaño: un dibujo con 500 nodos no enseña nada.
 
-### Paso 4 — `renderer.tsx`: el dibujo
+### Paso 5. El dibujo
 
-Un componente React con exportación por defecto. Recibe el paso y devuelve SVG y/o HTML:
-
-```tsx
-import type { RendererProps } from '../../core/types.js';
-import { coverage, type FenwickInput, type FenwickState } from './visualization.js';
-import './renderer.css';
-
-const cell = 56, row = 46, pad = 8;
-
-export default function FenwickRenderer({ step }: RendererProps<FenwickState, FenwickInput>) {
-  const { array, tree, active, used, highlight } = step.state;
-  const n = array.length;
-  const level = (node: number) => Math.log2(node & -node);
+```js
+render({ state }) {
+  const { array, tree, active, used, highlight } = state;
+  const n = array.length, cell = 56, row = 46;
   const levels = Math.floor(Math.log2(Math.max(1, n))) + 1;
-  const width = n * cell + pad * 2, height = levels * row + pad * 2;
-  return <>
-    <svg viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: width * 1.25 }} role="img" aria-label="Fenwick Tree">
-      {array.map((_, index) => {
-        const node = index + 1, [lo, hi] = coverage(node);
-        const x = pad + lo * cell + 3, y = pad + (levels - 1 - level(node)) * row + 4, w = (hi - lo + 1) * cell - 6;
-        return <g key={node} className={`viz-node ${active === node ? 'active' : used.includes(node) ? 'used' : ''}`}>
-          <rect x={x} y={y} width={w} height={row - 10} rx={6} />
-          <text x={x + w - cell / 2 + 3} y={y + 15} className="viz-value">{tree[node] ?? '·'}</text>
-          <text x={x + w - cell / 2 + 3} y={y + 29} className="viz-caption">t[{node}]</text>
-        </g>;
-      })}
-    </svg>
-    <div className="viz-array">{array.map((item, position) =>
-      <div key={position} className={highlight && position >= highlight[0] && position <= highlight[1] ? 'in-range' : ''}><small>{position}</small><span>{item}</span></div>)}</div>
-  </>;
+  const bars = array.map((_, index) => {
+    const node = index + 1, [lo, hi] = coverage(node);
+    const x = lo * cell + 3, y = (levels - 1 - Math.log2(lowbit(node))) * row + 4, w = (hi - lo + 1) * cell - 6;
+    return h`<g class="viz-node ${active === node ? 'active' : used.includes(node) ? 'used' : ''}">
+      <rect x="${x}" y="${y}" width="${w}" height="${row - 10}" rx="6"/>
+      <text x="${x + w - cell / 2 + 3}" y="${y + 15}" class="viz-value">${tree[node] ?? '·'}</text>
+      <text x="${x + w - cell / 2 + 3}" y="${y + 29}" class="viz-caption">t[${node}]</text></g>`;
+  });
+  const inRange = i => highlight && i >= highlight[0] && i <= highlight[1];
+  const cells = arrayCells(array, { y: levels * row + 6, cell, className: i => inRange(i) ? 'range' : '' });
+  return h`<svg viewBox="0 0 ${n * cell} ${levels * row + 54}" style="max-width:${n * cell * 1.25}px" role="img" aria-label="Fenwick Tree">${bars}${cells}</svg>`;
 }
 ```
 
-### Paso 5 — Regístrala
+### Paso 6. Declárala y pruébala
 
-```ts
-// src/visualizations/index.ts
-import { fenwickTree } from './data_structures/fenwick_tree/visualization.js';
-visualizations.register(fenwickTree);
+1. Opcional: añade la entrada en `metadata.yaml` (sección 2).
+2. Abre la referencia en modo Lectura → pestaña **Visualización**.
+3. Ejecuta cada operación, avanza y retrocede, escribe datos inválidos y comprueba el aviso. Prueba los temas claro y oscuro.
+4. En una carpeta local, edita el `.viz.js` en modo Edición; al guardar y volver a Lectura se recarga.
 
-// src/visualizations/renderers.ts
-'fenwick-tree': () => import('./data_structures/fenwick_tree/renderer.js'),
-```
+## 5. Dibujo
 
-La clave de `renderers.ts` debe ser exactamente el `id`.
-
-### Paso 6 — Pruébala
-
-```bash
-npm run dev          # Herramientas → Galería de visualizaciones → Fenwick Tree (BIT)
-npm run typecheck
-npm test
-```
-
-En la galería: ejecuta cada operación, avanza y retrocede, escribe datos inválidos y comprueba el aviso. Añade tus casos a `tests/visualizations.test.ts` (ver [Pruebas](#8-pruebas)).
-
-## 4. Dibujo
-
-### Posiciones
-
-Usa un `viewBox` en unidades propias y calcula las coordenadas a partir del estado; el SVG se escala solo al ancho disponible (`.viz-stage svg { width: 100% }`). Limita el tamaño máximo con `style={{ maxWidth }}` para que un dibujo pequeño no se vea gigante.
+`render` devuelve **un único `<svg>`** con `viewBox`. El motor lo escala al ancho disponible; limita el tamaño máximo con `style="max-width:…px"`. Dibuja las aristas antes que los nodos para que queden debajo.
 
 | Estructura | Cómo colocar los nodos |
 | --- | --- |
-| Árbol binario completo | `segmentLayout(n)` en `segment_tree/visualization.ts`: las hojas ocupan columnas consecutivas y cada padre se centra sobre sus hijos. |
-| Bosque / árbol general con arreglo de padres | `layoutForest(parent)` en `core/utils.ts`: devuelve `{ positions, width, height }`. |
-| Arreglo | Columnas de ancho fijo: `x = pad + i * cell`. O HTML con la clase `viz-array`. |
-| Matriz / tabla de DP | `x = pad + columna * cell`, `y = pad + fila * cell`. |
-| Grafo | Coordenadas fijas en la entrada, o en círculo: `x = cx + R·cos(2πi/n)`, `y = cy + R·sin(2πi/n)`. |
+| Árbol binario sobre un arreglo | Hojas en columnas consecutivas y cada nodo centrado sobre su intervalo (ver `segment-tree.viz.js`). |
+| Bosque / árbol general (arreglo de padres) | `viz.layoutForest(parent)`. |
+| Arreglo | `viz.arrayCells(valores, { y, cell })`. |
+| Matriz / tabla de DP | `x = columna * cell`, `y = fila * cell`. |
+| Grafo | Coordenadas en la entrada, o en círculo: `x = cx + R·cos(2πi/n)`, `y = cy + R·sin(2πi/n)`. |
 
-### Conexiones
+### Clases de estado
 
-Dibuja las aristas **antes** que los nodos para que queden debajo:
+Definidas en [`sandbox/styles.ts`](../src/visualizations/sandbox/styles.ts); funcionan en temas claro y oscuro y en la impresión:
 
-```tsx
-<line className={`viz-edge ${onPath ? 'visited' : ''}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
-```
+| Clase | Dónde | Significado habitual |
+| --- | --- | --- |
+| `viz-node` | `<g>` con `rect` o `circle` | Nodo. |
+| `viz-cell` | `<g>` con `rect` | Celda de arreglo (`arrayCells`). |
+| `viz-edge` | `<line>` | Arista; `visited` la resalta, `changed` la marca con trazos. |
+| `viz-value`, `viz-caption` | `<text>` | Valor en negrita; etiqueta pequeña. |
+| `active` | nodo o celda | Elemento que se procesa en este paso. |
+| `visited` | nodo o arista | Ya recorrido. |
+| `used` | nodo | Aportó al resultado o fue modificado. |
+| `skipped` | nodo | Descartado (se atenúa). |
+| `range` | celda | Posiciones afectadas. |
 
-Para grafos dirigidos añade un `<marker>` de flecha en `<defs>`; para pesos, un `<text>` en el punto medio.
+Variables para tus propios estilos en `<nombre>.viz.css`: `--viz-node`, `--viz-stroke`, `--viz-text`, `--viz-muted`, `--viz-accent`, `--viz-active`, `--viz-visited`, `--viz-used`, `--viz-range` y sus `-stroke`. La leyenda usa las mismas clases: `legend: [{ state: 'active', label: 'Nodo actual' }]`.
 
-### Resaltado
+## 6. Animación y reproductor
 
-`core/visualization.css` define clases de estado que funcionan en cualquier `<g className="viz-node …">` con un `rect` o `circle` dentro, y respetan los temas claro y oscuro:
+El reproductor es del motor; no hay que programarlo.
 
-| Clase | Significado habitual |
-| --- | --- |
-| `active` | Elemento que se procesa en este paso. |
-| `visited` | Ya recorrido. |
-| `used` | Aportó al resultado o fue modificado. |
-| `skipped` | Descartado (se atenúa). |
-| `in-range` / `active` en celdas de `.viz-array` | Posiciones afectadas. |
-
-Para colores propios usa las variables `--viz-active`, `--viz-visited`, `--viz-used`, `--viz-range` y sus `-stroke` en tu `renderer.css`. El contenedor lleva la clase `viz-<id>` para que acotes tus reglas (`.viz-dsu .viz-array div { … }`). La leyenda usa esas mismas clases: `legend: [{ state: 'active', label: 'Nodo actual' }]`.
-
-### Pantallas pequeñas
-
-- SVG con `viewBox` y sin `width`/`height` fijos.
-- `.viz-stage` tiene `overflow: auto`: si el dibujo no cabe, se desplaza.
-- Limita el tamaño de la entrada en `parseInput`.
-- Textos de 9–13 unidades de `viewBox`; menos no se lee en móvil.
-
-### Impresión
-
-Los documentos se generan en un worker, sin React. Si quieres que tu visualización se imprima, implementa `staticSvg(input)` en la definición y devuelve el SVG como texto (usa `escapeXml` para cualquier texto). `segmentTreeSvg` es el ejemplo.
-
-## 5. Animación y reproductor
-
-El reproductor es común (`core/player.tsx` + `playerReducer` en `core/engine.ts`); no hay que programarlo.
-
-| Control | Teclado (con el foco en la visualización) |
+| Control | Teclado (con el foco en la visualización o en el dibujo) |
 | --- | --- |
 | Paso siguiente / anterior | `→` / `←` |
 | Reproducir / pausar | `Espacio` |
 | Reiniciar | `Inicio` |
 | Barra de progreso, velocidad (0.5×, 1×, 2×, 4×) | — |
 
-- **Duración**: un paso dura `baseStepMs / velocidad` (900 ms a 1×). Cambia `baseStepMs` o `speeds` en `core/engine.ts`.
-- **Transiciones**: el contenedor expone la duración como variable CSS `--viz-step-ms`. Las clases comunes ya hacen transición de color. Para animar movimiento, mantén la misma `key` de React entre pasos y usa CSS:
-  ```css
-  .mi-nodo { transition: transform calc(var(--viz-step-ms) * .5); }
-  ```
-- **Anterior / siguiente**: no se «deshace» nada. Cada paso es una instantánea; retroceder dibuja la anterior. Si necesitas comparar, el renderer recibe `previous` y `next` (por ejemplo, para marcar qué celda cambió: `previous?.state.tree[i] !== step.state.tree[i]`).
-- **Granularidad**: un evento = un paso. Si la animación va demasiado rápida o lenta, emite más o menos eventos, o ignora algunos en el grabador (un `case` sin `snapshot`).
+- Un paso dura `900 ms / velocidad`. `context.durationMs` da el valor actual y la variable CSS `--viz-step-ms` está disponible para transiciones (`transition: fill calc(var(--viz-step-ms) * .25)`).
+- `context.previous` y `context.next` permiten marcar diferencias, por ejemplo la celda que cambió: `context.previous?.state.tree[i] !== step.state.tree[i]`.
+- Un evento = un paso. Si la animación va demasiado rápida o lenta, emite más o menos eventos, o ignora algunos en el grabador (un `case` sin `snapshot`).
 - Al pulsar **Ejecutar** se recalculan los pasos y el reproductor vuelve al paso 1.
 
-## 6. Depuración
+## 7. Impresión
+
+El generador de documentos incluye cada visualización como imagen: ejecuta la operación de impresión (la primera, o la de `print: { operation }`) con los datos de `metadata.yaml` y dibuja su **último paso** con `context.print = true` y tema claro. Tus estilos `.viz.css` se incrustan en la imagen. `print: false` la excluye; la opción «Visualizaciones» del generador las excluye todas.
+
+## 8. Depuración
 
 - **«Datos del paso (depuración)»**, bajo cada visualización, muestra el evento y el estado del paso actual en JSON.
-- El contenedor tiene `data-visualization="<id>"` y `data-step="<índice>"` para inspeccionarlo o usarlo en tests de navegador.
-- Las definiciones son código puro: pruébalas sin navegador.
-  ```bash
-  npx tsx -e "import { execute } from './src/visualizations/core/engine.ts'; import { fenwickTree } from './src/visualizations/data_structures/fenwick_tree/visualization.ts'; console.dir(execute(fenwickTree, {}, 'prefix', { right: 4 }).steps, { depth: 4 })"
-  ```
+- Los errores aparecen con el nombre del archivo:
 
-| Síntoma | Causa probable |
+| Mensaje | Causa probable |
 | --- | --- |
-| «No hay una visualización registrada para «x»» | Falta `register` en `index.ts`, o el `type` de `metadata.yaml` no coincide con el `id`. |
-| «…no tiene un dibujo registrado en renderers.ts» | Falta la entrada en `renderers.ts` o su clave no es el `id`. |
-| «…no produjo ningún paso» | `run` devolvió `[]`: el algoritmo no emitió eventos o el grabador no llamó a `snapshot`. Devuelve al menos un paso. |
+| «…debe exportar por defecto una función» | Falta `export default function (viz) { … }`. |
+| «La definición necesita la función «render»» (o `title`, `run`…) | Falta un miembro obligatorio. |
+| «…no produjo ningún paso» | `run` devolvió `[]`: el algoritmo no emitió eventos o el grabador no llamó a `snapshot`. |
 | «…produjo un paso no válido» | Falta `state` o `message` en algún paso. |
-| Todos los pasos se ven iguales | El `snapshot` no copia los arreglos del estado. |
-| «No se pudo dibujar este paso: …» | Excepción en el renderer (típico: leer una posición que no existe en el estado). Solo falla ese paso; los demás siguen. |
-| «Los datos declarados… no son válidos» | Las opciones de `metadata.yaml` no pasan `parseInput`; se usan los valores por defecto. |
-| No aparece en una referencia | No está declarada y ningún alias aparece como palabra completa en título, carpeta o etiquetas. |
+| Todos los pasos se ven iguales | `snapshot` no copia los arreglos del estado. |
+| «No se pudo dibujar este paso: …» | Excepción en `render`. Solo falla ese paso. |
+| «…tardó demasiado en responder» | Bucle infinito o cálculo muy largo (límite: 10 s). |
+| «Los datos de metadata.yaml no son válidos…» | Las opciones no pasan `parseInput`; se usan los valores por defecto. |
+| «El dibujo no es un SVG válido, así que no se puede imprimir» | `render` devolvió HTML o XML mal formado. |
 
-## 7. Recetas para otros algoritmos
+- Los archivos `.viz.js` son módulos normales: puedes probarlos sin navegador (sección 10).
 
-Para cada uno: qué eventos emitir, qué guardar en el estado y cómo dibujarlo. El contrato no cambia.
+## 9. Recetas para otros algoritmos
 
-### DSU (implementada: [`data_structures/dsu/`](../src/visualizations/data_structures/dsu/))
+El contrato no cambia; cambian los eventos, el estado y el dibujo.
 
-- **Eventos**: `find:start`, `find:step`, `find:root`, `find:compress`, `union:start`, `union:same`, `union:link`.
-- **Estado**: `{ parent, size, active, path, roots, changed }`.
-- **Dibujo**: `layoutForest(parent)` recalcula el bosque en cada paso; la arista recién cambiada se resalta con `changed`.
-- **Entrada**: número de elementos y lista de uniones iniciales (`0-1, 2-3`).
+| Algoritmo | Eventos | Estado | Dibujo |
+| --- | --- | --- | --- |
+| DSU (ejemplo: `algoritmos/dsu/dsu.viz.js`) | `find:start`, `find:step`, `find:root`, `find:compress`, `union:start`, `union:same`, `union:link` | `{ parent, size, active, path, roots, changed }` | `layoutForest(parent)` y `arrayCells(parent)` |
+| BFS (ejemplo: `algoritmos/grafos/bfs/bfs.viz.js`) | `start`, `pop`, `discover`, `skip`, `done`, `end` | `{ distance[], status[], queue[], active, edge, tree[] }` | Nodos en círculo, árbol BFS resaltado y la cola con `arrayCells` |
+| DFS | `visit { node, from }`, `edge:tree`, `edge:skip`, `push`, `pop`, `finish` | `{ status[], active, frontier[], order[], treeEdges[] }` | Nodos en círculo; la pila o cola con `arrayCells` |
+| Dijkstra | `extract { node, dist }`, `relax { from, to, old, new }`, `relax:skip`, `stale` | `{ dist[], parent[], settled[], queue[], active, edge }` | Peso en cada arista, distancia junto a cada nodo |
+| Kruskal | `edge:consider`, `edge:take`, `edge:reject` | `{ taken[], rejected[], current, total }` | Grafo con las aristas tomadas resaltadas; reutiliza una clase DSU dentro del archivo |
+| Programación dinámica | `cell:start { i, j }`, `cell:read { from }`, `cell:write { value }`, `path { cells }` | `{ table[][], active, reads[], path[] }` | Cuadrícula; flechas `<line>` desde cada lectura; la recurrencia en `message` |
+| Búsqueda binaria | `probe { lo, hi, mid }`, `go:left`, `go:right`, `found` | `{ array, lo, hi, mid }` | `arrayCells` con `range` en `[lo, hi]` y `active` en `mid` |
+| Sparse Table | `build:cell { level, i, from }`, `query { level, left, right }` | `{ table[][], active, reads[] }` | Una fila por nivel; cada celda cubre `2^nivel` columnas |
+| Recursión | `call { id, parent, args }`, `return { id, value }` | `{ parent[], labels[], status[], active }` | `layoutForest(parent)` da el árbol de llamadas |
 
-### Fenwick Tree (implementada: [`data_structures/fenwick_tree/`](../src/visualizations/data_structures/fenwick_tree/))
+## 10. Pruebas
 
-Ver el [tutorial](#3-tutorial-crear-una-visualización-fenwick-tree). Una idea de dibujo alternativa: nodos como árbol donde el padre de `i` es `i + lowbit(i)` (usa `layoutForest`).
-
-### Recorridos de grafos (DFS / BFS)
-
-- **Carpeta**: `src/visualizations/graphs/traversal/`.
-- **Entrada**: `{ n, edges: [number, number][], directed }`; campo de texto `0-1, 0-2, 1-3` y un campo `start`.
-- **Eventos**: `visit { node, from }`, `edge:tree { from, to }`, `edge:skip { from, to }`, `push`/`pop` (pila o cola), `finish { node }`.
-- **Estado**:
-  ```ts
-  type TraversalState = { status: ('new' | 'frontier' | 'done')[]; active?: number; frontier: number[]; order: number[]; treeEdges: [number, number][]; edge?: [number, number] };
-  ```
-- **Dibujo**: nodos en círculo; aristas del árbol con `visited`; debajo, la pila o cola como `viz-array`.
-- **Operaciones**: `dfs` y `bfs` en la misma definición comparten estado y renderer.
-
-### Dijkstra
-
-- **Carpeta**: `src/visualizations/graphs/dijkstra/`.
-- **Entrada**: aristas con peso `0-1:4, 0-2:1` y nodo origen.
-- **Eventos**: `extract { node, dist }`, `relax { from, to, weight, old, new }`, `relax:skip { from, to }`, `stale { node }` (entrada obsoleta de la cola), `done`.
-- **Estado**: `{ dist: (number | null)[]; parent: number[]; settled: number[]; queue: [number, number][]; active?: number; edge?: [number, number] }` (`null` = ∞).
-- **Dibujo**: grafo con el peso en cada arista, la distancia junto a cada nodo, y una tabla con `dist[]` y la cola de prioridad. Aristas del árbol de caminos mínimos (`parent`) con `visited`.
-
-### Árbol de expansión mínima (Kruskal)
-
-Reutiliza la clase `DSU` de `data_structures/dsu/algorithm.ts` dentro de tu algoritmo. Eventos `edge:consider`, `edge:take`, `edge:reject`; estado `{ taken: number[]; rejected: number[]; current?: number; total: number }` sobre la lista de aristas ordenada.
-
-### Programación dinámica
-
-- **Carpeta**: `src/visualizations/dynamic_programming/<problema>/`.
-- **Eventos**: `cell:start { i, j }`, `cell:read { i, j, from: [i', j'] }`, `cell:write { i, j, value }`, `answer { i, j }`, y `path { cells }` para reconstruir la solución.
-- **Estado**: `{ table: (number | null)[][]; active?: [number, number]; reads: [number, number][]; path: [number, number][] }`.
-- **Dibujo**: cuadrícula SVG o una `<table>`; la celda activa con `active`, las celdas de las que depende con `visited`, y flechas `<line>` de cada lectura a la celda activa. Muestra la recurrencia en `message`.
-
-### Búsqueda binaria
-
-Eventos `probe { lo, hi, mid, value }`, `go:left`, `go:right`, `found`/`missing`. Estado `{ array, lo, hi, mid }`. Dibujo: `viz-array` con `in-range` para `[lo, hi]` y `active` para `mid`.
-
-### Sparse Table
-
-Eventos `build:cell { level, i, value, from: [a, b] }` y `query { level, left, right }`. Estado `{ table: (number | null)[][]; active?: [number, number]; reads: [number, number][] }`. Dibujo: una fila por nivel, con cada celda cubriendo `2^nivel` columnas (como las barras del Fenwick).
-
-### Recursión
-
-Emite `call { id, parent, args }` y `return { id, value }`. Estado `{ parent: number[]; labels: string[]; status: ('running' | 'done')[]; active?: number }`. Dibujo: `layoutForest(parent)` da el árbol de llamadas directamente.
-
-## 8. Pruebas
-
-Las definiciones no usan el navegador, así que se prueban con `node:test` en [`tests/visualizations.test.ts`](../tests/visualizations.test.ts):
+Los archivos `.viz.js` no usan el navegador, así que el motor los prueba con `node:test` en [`tests/visualizations.test.ts`](../tests/visualizations.test.ts):
 
 ```ts
-import { execute } from '../src/visualizations/core/engine.js';
-import { FenwickTree } from '../src/visualizations/data_structures/fenwick_tree/algorithm.js';
-import { fenwickTree } from '../src/visualizations/data_structures/fenwick_tree/visualization.js';
-
-test('Fenwick Tree: algoritmo y pasos', () => {
-  // 1. El algoritmo, sin visualización.
-  assert.equal(new FenwickTree([5, 8, 6, 3]).range(1, 2), 14);
-  // 2. Los pasos: el último contiene el resultado.
-  const { steps } = execute(fenwickTree, { values: '5, 8, 6, 3' }, 'prefix', { right: 2 });
-  assert.match(steps.at(-1)!.result!, /19/);
-  // 3. Datos inválidos.
-  assert.throws(() => execute(fenwickTree, { values: '1, x' }), /enteros/);
-});
+const fenwick = loadDefinition(await import(pathToFileURL('examples/coleccion/algoritmos/fenwick-tree/fenwick-tree.viz.js').href));
+const { steps } = execute(fenwick, { values: '5, 8, 6, 3' }, 'prefix', { right: 2 });
+assert.match(steps.at(-1).result, /19/);
+assert.throws(() => execute(fenwick, { values: '1, x' }), /enteros/);
 ```
 
-Ya hay un test que recorre **todas** las visualizaciones registradas y comprueba que tienen dibujo, que cada operación se ejecuta con los valores por defecto y que los pasos son instantáneas distintas; la tuya queda cubierta al registrarla (actualiza la lista de identificadores esperados).
+Un test recorre todas las visualizaciones de los ejemplos y comprueba que cada operación se ejecuta con los valores por defecto y que cada paso produce un SVG. Para tus propias bibliotecas puedes copiar ese patrón.
 
 ```bash
-npm run typecheck   # tipos
-npm test            # unitarias
-npm run test:e2e    # navegador: abre la galería y avanza un paso en cada visualización
+npm run typecheck && npm test   # motor y ejemplos
+npm run test:e2e                # navegador: iframe aislado, reproductor, errores e impresión
 ```
 
-## 9. Lista de comprobación
+## 11. Seguridad
 
-- [ ] Carpeta propia con `algorithm.ts`, `visualization.ts`, `renderer.tsx` (y `renderer.css`, `README.md`).
-- [ ] El algoritmo funciona sin `trace` y no importa nada de la interfaz.
+El `.viz.js` es código de la biblioteca, que puede venir de un repositorio de GitHub. Por eso se ejecuta en `viz-sandbox.html`, un iframe con `sandbox="allow-scripts"` sin `allow-same-origin`:
+
+- Tiene un origen opaco: no puede leer IndexedDB, el almacenamiento ni los tokens de la aplicación, ni el DOM de la página.
+- Su CSP es `default-src 'none'`: no puede hacer peticiones de red ni cargar recursos externos.
+- No puede abrir ventanas ni navegar la página principal.
+- Solo se comunica con el motor por un `MessagePort` privado; recibe el código, las opciones y las órdenes, y devuelve pasos y tamaños.
+- En los documentos, el SVG se incrusta como `<img>`, donde no puede ejecutar scripts.
+
+## 12. Lista de comprobación
+
+- [ ] `<nombre>.viz.js` en la carpeta de la referencia, junto al código.
+- [ ] `export default function (viz) { return { … }; }` con `title`, `inputs`, `operations`, `parseInput`, `run` y `render`.
+- [ ] El algoritmo funciona sin `trace`.
 - [ ] `run` devuelve instantáneas independientes, con `message` en cada paso.
 - [ ] `parseInput` valida y limita el tamaño; los parámetros usan `integerParam`.
-- [ ] El renderer solo lee `step.state`.
-- [ ] Registrada en `index.ts` y en `renderers.ts` con el mismo identificador.
-- [ ] Probada en la galería, con datos válidos e inválidos, en tema claro y oscuro.
-- [ ] Tests añadidos; `npm run typecheck` y `npm test` pasan.
+- [ ] `render` solo lee el paso y devuelve un `<svg>` con `viewBox`, construido con `viz.h`.
+- [ ] Datos iniciales y título en `metadata.yaml`, si hacen falta.
+- [ ] Probada en Lectura con datos válidos e inválidos, en tema claro y oscuro, y en el generador de documentos.

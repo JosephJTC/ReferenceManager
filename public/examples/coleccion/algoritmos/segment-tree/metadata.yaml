@@ -10,8 +10,8 @@ complexity:
   time: O(n) construcción · O(log n) consulta y actualización
   space: O(4n)
 visualizations:
-  - type: segment-tree
+  - file: segment-tree.viz.js
     title: Segment Tree de suma paso a paso
     values: [5, 8, 6, 3, 2, 7, 2, 6]
     operation: sum
-related: [algoritmos/dsu]
+related: [algoritmos/dsu, algoritmos/fenwick-tree]

@@ -9,7 +9,6 @@ import { referenceCategory, referencePlatform } from '../shared/search.js';
 import { stableIdPattern } from '../core/library-index.js';
 import { createApi } from '../web/api.js';
 import { FolderTree } from './FolderTree.js';
-import { VisualizationGallery } from '../visualizations/core/VisualizationGallery.js';
 import { useReferenceSearch } from './useReferenceSearch.js';
 import { LibrariesPanel } from './LibrariesPanel.js';
 import { FilterBar, emptyFilters, activeFilterCount, type Filters } from './FilterBar.js';
@@ -74,9 +73,6 @@ function App() {
   const [collapseSignal, setCollapseSignal] = useState({ all: false, n: 0 });
   const [filterSignal, setFilterSignal] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [galleryOpen, setGalleryOpen] = useState(false);
-  const galleryModal = useRef<HTMLDialogElement>(null);
-  useEffect(() => { if (galleryOpen && !galleryModal.current?.open) galleryModal.current?.showModal(); }, [galleryOpen]);
   const sidebar = useResizable('sidebar-width', 280, 200, 520, 'left');
   const info = useResizable('info-width', 260, 200, 440, 'right');
   const modal = useRef<HTMLDialogElement>(null);
@@ -386,8 +382,7 @@ function App() {
     ] },
     { label: 'Herramientas', items: [
       { label: file && practiced.has(file.path) ? 'Quitar de práctica' : 'Seleccionar para practicar', action: () => file && togglePractice(file.path), disabled: !file || !editing || !codeExtensions.has(extensionOf(file.path)) },
-      { label: 'Abrir archivo externo', action: () => file && run(() => window.api.external(file.path)), disabled: !file || !editing },
-      { label: 'Galería de visualizaciones…', action: () => setGalleryOpen(true) }
+      { label: 'Abrir archivo externo', action: () => file && run(() => window.api.external(file.path)), disabled: !file || !editing }
     ] },
     { label: 'Imprimir', items: [
       { label: 'Imprimir referencia actual…', shortcut: 'Ctrl+P', action: () => printReference(), disabled: !reference },
@@ -464,7 +459,6 @@ function App() {
     <footer className="statusbar"><span className="status" role="status" aria-live="polite">{busy ? 'Procesando… ' : ''}{notice}</span><span className="spacer" />{has && <><span>{editing ? 'Edición' : 'Lectura'}</span><span>{collection!.references.length} referencias · {collection!.entries.length} elementos</span><span>{caps.write ? 'Editable' : 'Solo lectura'}</span>{dirty && <span className="warning">{dirtyFiles.length} sin guardar</span>}</>}</footer>
     {context && <ContextMenu {...context} onClose={() => setContext(undefined)} />}
     <dialog className="management-dialog" ref={modal} aria-label="Gestionar archivos" onCancel={() => { if (!busy) setOperation(undefined); }} onKeyDown={event => { if (busy && event.key === 'Escape') event.preventDefault(); }}><form onSubmit={submitOperation}><h2>{operation ? operationTitles[operation] : ''}</h2>{operation === 'rename' && <p>Origen: {operationSource}</p>}<label>Ruta relativa a la biblioteca<input autoFocus required value={destination} onChange={event => setDestination(event.target.value)} placeholder={operation === 'file' ? 'temas/grafos/bfs/explicacion.md' : 'temas/grafos/mi-referencia'} /></label><p className="muted">La carpeta padre debe existir. No se sobrescriben destinos existentes.{operation === 'file' ? ' Nombres reconocidos: explicacion.md, intuicion.md, correctitud.md, complejidad.md, ejemplos.md, variantes.md…' : ''}</p><p role="status">{notice}</p><button className="primary" disabled={busy} type="submit">Confirmar</button><button disabled={busy} type="button" onClick={() => setOperation(undefined)}>Cancelar</button></form></dialog>
-    {galleryOpen && <dialog className="management-dialog viz-gallery" ref={galleryModal} aria-label="Galería de visualizaciones" onClose={() => setGalleryOpen(false)}><h2>Galería de visualizaciones</h2><VisualizationGallery /><form method="dialog"><button>Cerrar</button></form></dialog>}
     <dialog className="management-dialog shortcuts" ref={shortcutsModal} aria-label="Atajos de teclado" onClose={() => setShortcutsOpen(false)}><h2>Atajos de teclado</h2><table><tbody>{[['Ctrl+K', 'Buscar referencias'], ['Ctrl+Shift+F', 'Filtros'], ['Ctrl+B', 'Mostrar u ocultar la barra lateral'], ['Alt+I', 'Panel de información'], ['Alt+M', 'Cambiar entre lectura y edición'], ['Ctrl+S', 'Guardar el archivo activo'], ['Alt+W', 'Cerrar la pestaña activa'], ['Alt+N', 'Nueva referencia'], ['F2', 'Mover o renombrar'], ['Alt+R', 'Actualizar la biblioteca'], ['Ctrl+P', 'Imprimir la referencia actual'], ['Ctrl+Shift+P', 'Generador de documentos'], ['↑ ↓ ← → Enter', 'Navegar el árbol'], ['← → Espacio', 'Controlar una visualización enfocada']].map(([keys, label]) => <tr key={keys}><td><kbd>{keys}</kbd></td><td>{label}</td></tr>)}</tbody></table><form method="dialog"><button className="primary">Cerrar</button></form></dialog>
   </div>;
 }

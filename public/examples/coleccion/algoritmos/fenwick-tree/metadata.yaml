@@ -1,0 +1,16 @@
+schema_version: 1
+title: Fenwick Tree
+subtitle: Sumas de prefijo y actualizaciones puntuales en O(log n)
+description: Binary Indexed Tree; cada nodo i guarda la suma del bloque (i - lowbit(i), i].
+category: algoritmos
+platform: Genérico
+tags: [Fenwick Tree, estructuras de datos, consultas de rango]
+language: C++
+complexity:
+  time: O(n) construcción · O(log n) consulta y actualización
+  space: O(n)
+visualizations:
+  - file: fenwick-tree.viz.js
+    title: Fenwick Tree paso a paso
+    values: [3, 2, -1, 6, 5, 4, -3, 3]
+related: [algoritmos/segment-tree]

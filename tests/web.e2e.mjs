@@ -38,7 +38,7 @@ try {
     const page = await newPage(context);
     await page.goto(url);
     await page.getByRole('button', { name: 'Abrir ejemplos', exact: true }).first().click();
-    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 6, null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 7, null, { timeout: 30000 });
     // Modo lectura: el árbol solo muestra carpetas y referencias.
     assert.equal(await page.locator('.tree-file').count(), 0);
     await page.getByRole('button', { name: 'Plegar algoritmos', exact: true }).click();
@@ -75,15 +75,27 @@ try {
     await page.locator('.tag-list').getByRole('option', { name: 'Segment Tree' }).click();
     await page.keyboard.press('Escape');
     // Visualización de Segment Tree: reproductor paso a paso.
-    await page.getByLabel('Buscar referencias').fill('segment');
-    await page.waitForFunction(() => document.querySelectorAll('.sidebar .reference').length === 1);
-    await page.locator('.sidebar .reference').click();
+    // Visualización de Segment Tree: viene del archivo segment-tree.viz.js de la referencia y se dibuja en un iframe aislado.
+    const openReference = async (query, path) => {
+      await page.getByLabel('Buscar referencias').fill(query);
+      await page.locator('.sidebar .reference').filter({ hasText: path }).first().click();
+    };
+    await openReference('segment', 'algoritmos/segment-tree');
     await page.locator('.markdown .katex').first().waitFor();
+    await page.getByRole('tab', { name: /^Código/ }).click();
+    assert.doesNotMatch(await page.locator('.reading').textContent(), /\.viz\.js/);
     await page.getByRole('tab', { name: /^Visualización/ }).click();
-    await page.locator('.viz-stage svg').waitFor({ timeout: 15000 });
+    const drawing = page.frameLocator('.viz-frame');
+    await drawing.locator('svg .viz-node').first().waitFor({ timeout: 15000 });
+    assert.equal(await page.locator('.viz-frame').getAttribute('sandbox'), 'allow-scripts');
+    // El código de la referencia no puede leer el almacenamiento de la aplicación.
+    assert.equal(await page.locator('.viz-frame').evaluate(frame => { try { return frame.contentWindow.document && 'same-origin'; } catch { return 'isolated'; } }), 'isolated');
     const before = await page.locator('.step-counter').textContent();
+    const firstDrawing = await drawing.locator('svg').innerHTML();
     await page.getByRole('button', { name: 'Paso siguiente' }).click();
     assert.notEqual(await page.locator('.step-counter').textContent(), before);
+    await page.waitForTimeout(300);
+    assert.notEqual(await drawing.locator('svg').innerHTML(), firstDrawing);
     await page.getByRole('button', { name: 'Paso anterior' }).click();
     assert.equal(await page.locator('.step-counter').textContent(), before);
     // Consulta con datos inválidos: se informa sin romper la vista; al corregir vuelve a funcionar.
@@ -94,22 +106,20 @@ try {
     await page.locator('.viz').getByLabel('Valores').fill('4, 1, 7, 3, 9, 2');
     await page.locator('.viz').getByRole('button', { name: 'Ejecutar' }).click();
     await page.locator('.viz [role=alert]').waitFor({ state: 'detached' });
-    await page.locator('.viz-stage .viz-node').first().waitFor();
-    assert.equal(await page.locator('.viz-stage .viz-node').count(), 11);
-    // Galería: todas las visualizaciones registradas se cargan y se descargan al cambiar.
-    await page.getByRole('menuitem', { name: 'Herramientas', exact: true }).click();
-    await page.getByRole('menuitem', { name: /Galería de visualizaciones/ }).click();
-    const gallery = page.locator('dialog.viz-gallery');
-    for (const id of ['segment-tree', 'fenwick-tree', 'dsu']) {
-      await gallery.getByLabel('Visualización', { exact: true }).selectOption(id);
-      await gallery.locator(`.viz[data-visualization="${id}"] .viz-stage svg`).waitFor({ timeout: 15000 });
-      assert.equal(await gallery.locator('.viz').count(), 1);
-      const first = await gallery.locator('.viz-explain').textContent();
-      await gallery.getByRole('button', { name: 'Paso siguiente' }).click();
-      assert.notEqual(await gallery.locator('.viz-explain').textContent(), first);
+    await page.waitForFunction(() => document.querySelector('.step-counter')?.textContent?.includes('/'));
+    await drawing.locator('svg .viz-node').nth(10).waitFor();
+    assert.equal(await drawing.locator('svg .viz-node').count(), 11);
+    // Las otras referencias traen su propia visualización.
+    for (const [query, path, title] of [['fenwick', 'algoritmos/fenwick-tree', 'Fenwick Tree paso a paso'], ['dsu', 'algoritmos/dsu', 'Conjuntos disjuntos paso a paso'], ['bfs', 'algoritmos/grafos/bfs', 'BFS paso a paso']]) {
+      await openReference(query, path);
+      await page.getByRole('tab', { name: /^Visualización/ }).click();
+      await page.locator('.reading-section h2', { hasText: title }).waitFor();
+      await page.frameLocator('.viz-frame').locator('svg .viz-node').first().waitFor({ timeout: 15000 });
+      const first = await page.locator('.viz-explain').textContent();
+      await page.getByRole('button', { name: 'Paso siguiente' }).click();
+      assert.notEqual(await page.locator('.viz-explain').textContent(), first);
     }
-    await gallery.getByRole('button', { name: 'Cerrar' }).click();
-    await gallery.waitFor({ state: 'detached' });
+    await page.getByLabel('Buscar referencias').fill('');
     // Menú Ver: tema claro.
     const theme = await page.evaluate(() => document.documentElement.dataset.theme);
     await page.getByRole('menuitem', { name: 'Ver', exact: true }).click();
@@ -119,6 +129,17 @@ try {
     await page.getByRole('menuitem', { name: 'Imprimir', exact: true }).click();
     await page.getByRole('menuitem', { name: /Imprimir referencia actual/ }).click();
     await page.locator('.document-workspace').waitFor({ timeout: 15000 });
+    // La visualización de la referencia (BFS) se imprime como imagen SVG generada en el entorno aislado.
+    await page.getByRole('button', { name: 'Generar vista previa' }).click();
+    await page.waitForFunction(() => document.querySelector('.document-preview iframe')?.contentDocument?.querySelector('figure.visualization img'), null, { timeout: 60000 });
+    await page.waitForFunction(() => document.querySelector('.document-preview iframe').contentDocument.querySelector('figure.visualization img').naturalWidth > 0, null, { timeout: 10000 });
+    const printed = await page.evaluate(() => {
+      const image = document.querySelector('.document-preview iframe').contentDocument.querySelector('figure.visualization img');
+      return { src: image.getAttribute('src').slice(0, 40), width: image.naturalWidth, caption: image.parentElement.textContent };
+    });
+    assert.match(printed.src, /^data:image\/svg\+xml;base64,/);
+    assert.ok(printed.width > 100, `ancho de la imagen impresa: ${printed.width}`);
+    assert.match(printed.caption, /BFS paso a paso/);
     // Recarga conserva la biblioteca de ejemplos registrada.
     await page.reload();
     await page.getByRole('button', { name: 'Bibliotecas', exact: true }).first().click();
@@ -343,7 +364,7 @@ try {
     const page = await newPage(context);
     await page.goto(url);
     await page.getByRole('button', { name: 'Abrir ejemplos', exact: true }).first().click();
-    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 6, null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll('.home .reference').length === 7, null, { timeout: 30000 });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `desbordamiento horizontal: ${overflow}px`);
     await context.close();

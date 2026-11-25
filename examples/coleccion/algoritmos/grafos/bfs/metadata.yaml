@@ -1,0 +1,16 @@
+schema_version: 1
+title: BFS
+subtitle: Distancias mínimas en aristas en un grafo no ponderado
+description: Recorrido en anchura con una cola; cada nodo se visita en orden de distancia al origen.
+category: algoritmos
+platform: Genérico
+tags: [BFS, grafos, recorridos]
+language: Python
+complexity:
+  time: O(n + m)
+  space: O(n)
+visualizations:
+  - file: bfs.viz.js
+    title: BFS paso a paso
+    nodes: 7
+    edges: [[0, 1], [0, 2], [1, 3], [2, 3], [2, 4], [3, 5], [4, 5], [5, 6]]

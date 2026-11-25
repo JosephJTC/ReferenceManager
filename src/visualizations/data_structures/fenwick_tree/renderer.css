@@ -1,4 +1,0 @@
-/* Las celdas del arreglo se alinean con las columnas del diagrama. */
-.fenwick-array{flex-wrap:nowrap}
-.fenwick-array div{flex:1 1 0;min-width:0}
-.viz-fenwick-tree .viz-stage{align-items:stretch}

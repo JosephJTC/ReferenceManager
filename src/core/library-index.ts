@@ -1,5 +1,5 @@
 import type { Collection, Reference } from '../shared/types.js';
-import { codeExtensions, extensionOf, isMetadataFile } from '../shared/formats.js';
+import { codeExtensions, extensionOf, isMetadataFile, isVisualizationAsset } from '../shared/formats.js';
 import { baseName, parentOf, sha256Hex } from './provider.js';
 import { parseMetadata } from './indexer.js';
 
@@ -41,7 +41,7 @@ export async function buildLibraryIndex(
     const notesPaths: string[] = [];
     for (const file of reference.files) {
       const extension = extensionOf(file);
-      const role = isMetadataFile(file) ? 'metadata' : codeExtensions.has(extension) ? 'code' : /\.(md|txt)$/i.test(file) ? 'notes' : 'other';
+      const role = isMetadataFile(file) ? 'metadata' : codeExtensions.has(extension) && !isVisualizationAsset(file) ? 'code' : /\.(md|txt)$/i.test(file) ? 'notes' : 'other';
       if (role === 'notes') notesPaths.push(file);
       files.push({
         path: file, role,

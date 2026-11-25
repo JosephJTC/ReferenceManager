@@ -133,8 +133,9 @@ test('no atraviesa junctions o enlaces fuera de la colección', async () => {
 });
 test('la colección real de ejemplos incluye categorías, varios lenguajes y estados incompletos', async () => {
   const result = await new LibraryIndexer(new NodeFsProvider(path.resolve('examples/coleccion'))).scan();
-  assert.equal(result.references.length, 6);
+  assert.equal(result.references.length, 7);
   assert.equal(result.references.find(ref => ref.title === 'DSU')?.code.length, 2);
+  assert.ok(result.references.find(ref => ref.title === 'DSU')?.files.includes('algoritmos/dsu/dsu.viz.js'));
   const segment = result.references.find(ref => ref.path === 'algoritmos/segment-tree');
   assert.ok(segment?.files.includes('algoritmos/segment-tree/docs/02-intuicion.md'));
   assert.ok(!result.references.some(ref => ref.path.endsWith('/docs')));
